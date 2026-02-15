@@ -1,0 +1,21 @@
+fastapi
+uvicorn
+python-dotenv
+pydantic
+langchain>=0.2.0
+langchain-core==1.2.8
+langchain-community==0.4.1
+langchain-openai
+langchain-anthropic
+langgraph>=0.2.0
+langfuse==2.60.10
+opentelemetry-distro
+opentelemetry-exporter-otlp
+opentelemetry-instrumentation-fastapi
+# Biomni Scientific libs
+numpy
+pandas
+scipy
+biopython
+# 필요시 추가 (무거운 라이브러리는 로컬 설치 시 주의)
+# scanpy
