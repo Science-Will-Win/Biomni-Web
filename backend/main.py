@@ -1,6 +1,11 @@
 import os
 import sys
 import logging
+import json
+import uuid
+import time
+import requests
+from datetime import datetime
 from typing import Optional, List, Any, Dict
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -95,7 +100,7 @@ async def chat_endpoint(request: ChatRequest):
         # agent.app.stream = traced_stream 
         
         # 4. 에이전트 실행
-        langfuse_handler = CallbackHandler()
+        langfuse_handler = langfuse_context.get_current_langchain_handler()
         response_log, response_content = agent.go(request.message, callbacks=[langfuse_handler])
         
         # agent.app.stream = original_stream
@@ -105,7 +110,49 @@ async def chat_endpoint(request: ChatRequest):
             output=str(response_content),
             metadata={"full_log_length": len(response_log)}
         )
+
+        # 🌟 매우 중요: 백그라운드에서 수집 중인 모든 하위 Span들을 서버로 강제 전송 완료시킵니다.
+        langfuse_context.flush()
+
+        trace_id = langfuse_context.get_current_trace_id()
         
+        # Langfuse 서버의 DB에 하위 Span들이 완전히 기록될 때까지 아주 잠깐(1~2초) 대기합니다.
+        time.sleep(1.5) 
+        
+        langfuse_host = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com").rstrip("/")
+        public_key = os.getenv("LANGFUSE_PUBLIC_KEY")
+        secret_key = os.getenv("LANGFUSE_SECRET_KEY")
+        
+        # Langfuse REST API를 호출하여 해당 트레이스의 '모든 세부 정보'를 요청합니다.
+        api_url = f"{langfuse_host}/api/public/traces/{trace_id}"
+        api_response = requests.get(api_url, auth=(public_key, secret_key))
+        
+        if api_response.status_code == 200:
+            full_trace_data = api_response.json()
+            
+            # full_trace_data 안에는 "observations"라는 배열이 있으며, 
+            # 여기에 LLM 호출, Tool 검색, 코드 실행 등 모든 하위 span이 들어있습니다.
+            reasoning_data = {
+                "trace_id": trace_id,
+                "timestamp": datetime.now().isoformat(),
+                "instruction": request.message,
+                "langfuse_full_trace": full_trace_data, # 🌟 쪼개진 Span 트리 통째로 저장!
+                "final_answer": str(response_content)
+            }
+            
+            # (이전 답변에서 설정하신 폴더 경로를 사용하세요. 예: /app/logs 또는 /app/data/reasoning_dataset)
+            save_dir = "/app/logs" 
+            os.makedirs(save_dir, exist_ok=True)
+            
+            file_path = os.path.join(save_dir, f"trace_{trace_id}.json")
+            
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(reasoning_data, f, ensure_ascii=False, indent=4)
+                
+            logger.info(f"✅ Full trace data saved to {file_path}")
+        else:
+            logger.error(f"Failed to fetch trace from Langfuse: {api_response.text}")
+
         # 5. [수정됨] 로그를 포함하여 반환
         return {
             "response": str(response_content),
@@ -119,4 +166,5 @@ async def chat_endpoint(request: ChatRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # app 대신 "main:app" 문자열로 넣고, reload=True를 추가합니다.
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
