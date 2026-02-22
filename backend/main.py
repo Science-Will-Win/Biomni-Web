@@ -95,7 +95,8 @@ async def chat_endpoint(request: ChatRequest):
         # agent.app.stream = traced_stream 
         
         # 4. 에이전트 실행
-        response_log, response_content = agent.go(request.message)
+        langfuse_handler = CallbackHandler()
+        response_log, response_content = agent.go(request.message, callbacks=[langfuse_handler])
         
         # agent.app.stream = original_stream
         
