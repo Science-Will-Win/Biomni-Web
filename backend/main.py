@@ -132,105 +132,148 @@ async def chat_endpoint(request: ChatRequest):
         if api_response.status_code == 200:
             full_trace_data = api_response.json()
             
-            base_log_dir = "/app/logs" # 또는 "/app/data/reasoning_dataset"
+            base_log_dir = "/app/logs"
             
             # ==============================================================
             # 1. 원본 데이터 (Raw Data) 저장
             # ==============================================================
+            raw_dir = os.path.join(base_log_dir, "raw")
+            os.makedirs(raw_dir, exist_ok=True)
+            
+            raw_data = {
+                "trace_id": trace_id,
+                "timestamp": datetime.now().isoformat(),
+                "instruction": request.message,
+                "langfuse_full_trace": full_trace_data, 
+                "response_log": response_log,
+                "final_answer": str(response_content)
+            }
+            
+            raw_file_path = os.path.join(raw_dir, f"trace_{trace_id}.json")
+            with open(raw_file_path, "w", encoding="utf-8") as f:
+                json.dump(raw_data, f, ensure_ascii=False, indent=4)
+                
+            # ==============================================================
+            # 2. 파인튜닝용 정제 데이터 (Refined Data) - Langfuse Observation 직접 파싱
+            # ==============================================================
+            
             refined_dir = os.path.join(base_log_dir, "refined")
             os.makedirs(refined_dir, exist_ok=True)
             
-            # LangChain 객체에서 딕셔너리를 완벽하게 추출하는 함수
-            def dump_msg(obj):
-                if isinstance(obj, dict): return dict(obj)
-                d = {}
-                if hasattr(obj, "dict") and callable(obj.dict):
-                    try: d.update(obj.dict())
-                    except: pass
-                elif hasattr(obj, "__dict__"):
-                    try: d.update(vars(obj))
-                    except: pass
-                for attr in ["id", "name", "type", "content", "tool_calls", "invalid_tool_calls", "response_metadata", "additional_kwargs", "usage_metadata"]:
-                    if hasattr(obj, attr):
-                        val = getattr(obj, attr)
-                        if not callable(val): d[attr] = val
-                return d
-
             def clean_think(text):
                 if not text: return ""
                 text = re.sub(r"<think>", "", text)
                 text = re.sub(r"</think>", "", text)
                 return text.strip()
 
+            # 🌟 [신규] Trace 데이터 전체를 뒤져서 '원본 시스템 프롬프트'를 동적으로 완벽 추출합니다 (하드코딩 제로)
+            def find_system_content(obj):
+                if isinstance(obj, dict):
+                    if obj.get("type") in ["system", "system_message"] and "content" in obj:
+                        return str(obj["content"])
+                    if isinstance(obj.get("id"), list) and obj.get("id") and obj.get("id")[-1] == "SystemMessage":
+                        return str(obj.get("kwargs", {}).get("content", ""))
+                    if obj.get("role") == "system" and "content" in obj:
+                        return str(obj["content"])
+                    for k, v in obj.items():
+                        res = find_system_content(v)
+                        if res: return res
+                elif isinstance(obj, (list, tuple)):
+                    for item in obj:
+                        res = find_system_content(item)
+                        if res: return res
+                return ""
+
+            messages = []
+            
+            # 1. System Message 동적 세팅
+            extracted_sys_content = find_system_content(full_trace_data)
+            if extracted_sys_content:
+                # 추출된 원본 시스템 프롬프트가 존재하면 그대로 쓰고, R1 파인튜닝용 <think> 지시문만 끝에 추가
+                if "<think>" not in extracted_sys_content:
+                    sys_content = extracted_sys_content + "\n\nUse <think>...</think> tags to show your step-by-step reasoning process before acting."
+                else:
+                    sys_content = extracted_sys_content
+            else:
+                # 만약의 경우를 대비한 최소한의 Fallback (추출 실패 시)
+                sys_content = "You are Biomni, an advanced reasoning and acting agent. Use <think>...</think> tags to show your step-by-step reasoning process before acting."
+
+            messages.append({
+                "id": None, "name": None, "type": "system", "content": sys_content,
+                "additional_kwargs": {}, "response_metadata": {}
+            })
+            
+            # 2. Human Message 세팅
+            messages.append({
+                "id": None, "name": None, "type": "human", "content": request.message,
+                "additional_kwargs": {}, "response_metadata": {}
+            })
+
+            # 3. Langfuse REST API로 받아온 확정 데이터를 파싱 (메모리 휘발 방지)
+            observations = full_trace_data.get("observations", [])
+            observations.sort(key=lambda x: x.get("startTime", "")) 
+            
+            think_steps = []
+            seen_contents = set()
             clean_final = clean_think(str(response_content)).strip()
             
-            # 💡 [핵심] 텍스트 쪼가리인 response_log 대신, a1.py에 저장된 '실제 원본 상태 객체'를 가져옵니다.
-            raw_msgs = []
-            if hasattr(agent, "_conversation_state") and agent._conversation_state:
-                state_msgs = agent._conversation_state.get("messages", [])
-                for m in state_msgs:
-                    raw_msgs.append(dump_msg(m))
-            
-            messages = []
-            seen_contents = set()
-            
-            for m_dict in raw_msgs:
-                m_type = m_dict.get("type", "")
+            for obs in observations:
+                obs_type = obs.get("type")
+                name = obs.get("name", "")
                 
-                # 1. System Message (think 프롬프트 추가)
-                if m_type == "system":
-                    m_dict["content"] = "You are Biomni-R0, an advanced reasoning and acting agent. Use <think>...</think> tags to show your step-by-step reasoning process before acting. Use <execute> to run python code and gather data. Use <solution> to provide the final answer."
-                    messages.append(m_dict)
+                if name == "Biomni Chat Interaction":
                     continue
                     
-                # 2. Human Message
-                if m_type == "human":
-                    messages.append(m_dict)
-                    continue
-                
-                # 3. AI 및 Tool 메시지 처리
-                if m_type not in ["ai", "ai_message", "tool", "tool_message"]:
+                output = obs.get("output")
+                if not output:
                     continue
                     
-                # 타입명 통일
-                if m_type == "ai_message": m_dict["type"] = "ai"
-                if m_type == "tool_message": m_dict["type"] = "tool"
-                m_type = m_dict["type"]
-                
-                content = str(m_dict.get("content", "") or "")
-                
-                if not content.strip():
-                    messages.append(m_dict)
-                    continue
+                content = ""
+                if isinstance(output, dict):
+                    if "kwargs" in output and "content" in output["kwargs"]:
+                        content = str(output["kwargs"].get("content", ""))
+                    elif "content" in output:
+                        content = str(output.get("content", ""))
+                    else:
+                        content = json.dumps(output, ensure_ascii=False)
+                else:
+                    content = str(output)
                     
                 clean_content = clean_think(content)
-                
-                if m_type == "tool":
-                    m_dict["content"] = clean_content
-                    messages.append(m_dict)
+                if not clean_content.strip():
                     continue
                     
-                if m_type == "ai":
-                    # 중복 답변 차단
-                    if clean_content and clean_content in seen_contents:
-                        continue
-                    if clean_content:
-                        seen_contents.add(clean_content)
-                        
-                    # 최종 답변(final_answer)과 완전히 동일한 경우 think로 감싸지 않음
-                    if clean_content == clean_final:
-                        m_dict["content"] = clean_content
+                if clean_content in seen_contents:
+                    continue
+                seen_contents.add(clean_content)
+                
+                if clean_content == clean_final:
+                    continue
+                    
+                if obs_type == "GENERATION":
+                    think_steps.append(clean_content)
+                elif obs_type == "SPAN":
+                    if "feedback" in name.lower() or "error" in name.lower():
+                        think_steps.append(f"System Feedback:\n{clean_content}")
                     else:
-                        # 중간 추론 과정은 전체를 <think>로 예쁘게 감싸기
-                        if clean_content.strip():
-                            m_dict["content"] = f"<think>\n{clean_content}\n</think>"
-                        else:
-                            m_dict["content"] = ""
-                            
-                    messages.append(m_dict)
+                        think_steps.append(f"Observation:\n{clean_content}")
+
+            # 4. DeepSeek R1 스타일 조립
+            combined_think = "\n\n".join(think_steps)
+            if combined_think.strip():
+                deepseek_content = f"<think>\n{combined_think}\n</think>\n\n{clean_final}"
+            else:
+                deepseek_content = clean_final
+                
+            messages.append({
+                "id": None, "name": None, "type": "ai", "content": deepseek_content,
+                "tool_calls": [], "invalid_tool_calls": [], "usage_metadata": None,
+                "additional_kwargs": {}, "response_metadata": {}
+            })
 
             refined_data = {
                 "trace_id": trace_id,
+                "final_answer": str(response_content),
                 "messages": messages
             }
             
@@ -238,7 +281,7 @@ async def chat_endpoint(request: ChatRequest):
             with open(refined_file_path, "w", encoding="utf-8") as f:
                 json.dump(refined_data, f, ensure_ascii=False, indent=4)
                 
-            logger.info(f"✅ Saved raw and refined trace data to {base_log_dir} (Trace ID: {trace_id})")
+            logger.info(f"✅ Saved raw and refined trace data (DeepSeek R1 style) to {base_log_dir}")
 
         # 5. [수정됨] 로그를 포함하여 반환
         return {
