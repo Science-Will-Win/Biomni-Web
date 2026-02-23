@@ -2,7 +2,8 @@ import axios from 'axios';
 import { LogStep } from './types';
 
 // 백엔드 주소 (로컬)
-const API_BASE_URL = 'http://localhost:8000/api';
+const API_BASE_URL = 'http://34.50.10.138:8000/api';
+//const API_BASE_URL = 'http://localhost:8000/api';
 
 interface ChatResponse {
   response: string;

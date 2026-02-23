@@ -19,3 +19,4 @@ scipy
 biopython
 # 필요시 추가 (무거운 라이브러리는 로컬 설치 시 주의)
 # scanpy
+PyPDF2

@@ -132,24 +132,77 @@ async def chat_endpoint(request: ChatRequest):
             
             # full_trace_data 안에는 "observations"라는 배열이 있으며, 
             # 여기에 LLM 호출, Tool 검색, 코드 실행 등 모든 하위 span이 들어있습니다.
-            reasoning_data = {
+            base_log_dir = "/app/logs" # 또는 "/app/data/reasoning_dataset"
+            
+            # ==============================================================
+            # 1. 원본 데이터 (Raw Data) 전용 폴더 및 저장
+            # ==============================================================
+            raw_dir = os.path.join(base_log_dir, "raw")
+            os.makedirs(raw_dir, exist_ok=True)
+            
+            raw_data = {
                 "trace_id": trace_id,
                 "timestamp": datetime.now().isoformat(),
                 "instruction": request.message,
-                "langfuse_full_trace": full_trace_data, # 🌟 쪼개진 Span 트리 통째로 저장!
+                "langfuse_full_trace": full_trace_data, 
                 "final_answer": str(response_content)
             }
             
-            # (이전 답변에서 설정하신 폴더 경로를 사용하세요. 예: /app/logs 또는 /app/data/reasoning_dataset)
-            save_dir = "/app/logs" 
-            os.makedirs(save_dir, exist_ok=True)
-            
-            file_path = os.path.join(save_dir, f"trace_{trace_id}.json")
-            
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(reasoning_data, f, ensure_ascii=False, indent=4)
+            # 파일명은 깔끔하게 통일
+            raw_file_path = os.path.join(raw_dir, f"trace_{trace_id}.json")
+            with open(raw_file_path, "w", encoding="utf-8") as f:
+                json.dump(raw_data, f, ensure_ascii=False, indent=4)
                 
-            logger.info(f"✅ Full trace data saved to {file_path}")
+            # ==============================================================
+            # 2. 파인튜닝용 정제 데이터 (Agent Training Format - ChatML/ShareGPT)
+            # ==============================================================
+            refined_dir = os.path.join(base_log_dir, "refined")
+            os.makedirs(refined_dir, exist_ok=True)
+            
+            observations = full_trace_data.get("observations", [])
+            observations.sort(key=lambda x: x.get("startTime", ""))
+            
+            # 학습 표준 포맷인 messages 배열 생성
+            messages = [
+                {"role": "system", "content": "You are Biomni-R0, an advanced reasoning and acting agent. Use <execute> to run python code and gather data. Use <solution> to provide the final answer."},
+                {"role": "user", "content": request.message}
+            ]
+            
+            for obs in observations:
+                obs_type = obs.get("type")
+                name = obs.get("name", "")
+                output = obs.get("output")
+                
+                if not output:
+                    continue
+                
+                output_text = str(output)
+                if isinstance(output, dict) and "content" in output:
+                    output_text = str(output["content"])
+                
+                # 1. 모델이 직접 생성한 텍스트 (생각 + <execute> 또는 <solution>)
+                if obs_type == "GENERATION":
+                    # 중복 방지를 위해 마지막 메시지가 assistant가 아닐 때만 추가
+                    if messages[-1]["role"] != "assistant":
+                        messages.append({"role": "assistant", "content": output_text.strip()})
+                
+                # 2. 파이썬 샌드박스가 실행한 결과 (Observation)
+                elif obs_type == "SPAN" and ("Run" in name or "Tool" in name or "execute" in name.lower()):
+                    messages.append({
+                        "role": "tool",  # 프레임워크에 따라 "user" 또는 "observation"으로 변경 가능
+                        "content": f"Observation:\n{output_text.strip()}"
+                    })
+
+            refined_data = {
+                "trace_id": trace_id,
+                "messages": messages
+            }
+            
+            refined_file_path = os.path.join(refined_dir, f"trace_{trace_id}.json")
+            with open(refined_file_path, "w", encoding="utf-8") as f:
+                json.dump(refined_data, f, ensure_ascii=False, indent=4)
+                
+            logger.info(f"✅ Saved trace data to {raw_dir} and {refined_dir}")
         else:
             logger.error(f"Failed to fetch trace from Langfuse: {api_response.text}")
 
