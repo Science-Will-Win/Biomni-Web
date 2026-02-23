@@ -1,0 +1,21 @@
+{
+    "trace_id": "c30bc4c5-6a81-41d2-847d-e20ecdaf42af",
+    "messages": [
+        {
+            "content": "You are Biomni-R0, an advanced reasoning and acting agent. Use <think>...</think> tags to show your step-by-step reasoning process before acting. Use <execute> to run python code and gather data. Use <solution> to provide the final answer.",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "system",
+            "name": null,
+            "id": null
+        },
+        {
+            "content": "Plan and experience a CRISPR screen to identify genes that regulate T cell exhaustion, measured by the change in T cell receptor (TCR) signaling between acute (interleukin-2 [IL-2] only) and chronic (anti-CD3 and IL-2) stimulation conditions. Generate 32 genes that maximize the perturbation effect.",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "name": null,
+            "id": null
+        }
+    ]
+}
