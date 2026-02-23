@@ -137,34 +137,12 @@ async def chat_endpoint(request: ChatRequest):
             # ==============================================================
             # 1. 원본 데이터 (Raw Data) 저장
             # ==============================================================
-            raw_dir = os.path.join(base_log_dir, "raw")
-            os.makedirs(raw_dir, exist_ok=True)
-            
-            raw_data = {
-                "trace_id": trace_id,
-                "timestamp": datetime.now().isoformat(),
-                "instruction": request.message,
-                "langfuse_full_trace": full_trace_data, 
-                "response_log": response_log, # "type": "ai" 데이터를 포함하는 원본 로그 전체
-                "final_answer": str(response_content)
-            }
-            
-            raw_file_path = os.path.join(raw_dir, f"trace_{trace_id}.json")
-            with open(raw_file_path, "w", encoding="utf-8") as f:
-                json.dump(raw_data, f, ensure_ascii=False, indent=4)
-                
-            # ==============================================================
-            # 2. 파인튜닝용 정제 데이터 (Refined Data)
-            # ==============================================================
             refined_dir = os.path.join(base_log_dir, "refined")
             os.makedirs(refined_dir, exist_ok=True)
             
-            # [초강력 파서] 딕셔너리 형태의 로그를 마주하면 절대 훼손하지 않고 100% 그대로 통과시킵니다.
+            # LangChain 객체에서 딕셔너리를 완벽하게 추출하는 함수
             def dump_msg(obj):
-                # 🌟 [핵심 수정] 원본이 딕셔너리면 그 어떤 속성 유실 없이 그대로 반환! (이전 버그 원인 해결)
-                if isinstance(obj, dict):
-                    return dict(obj)
-                    
+                if isinstance(obj, dict): return dict(obj)
                 d = {}
                 if hasattr(obj, "dict") and callable(obj.dict):
                     try: d.update(obj.dict())
@@ -172,41 +150,11 @@ async def chat_endpoint(request: ChatRequest):
                 elif hasattr(obj, "__dict__"):
                     try: d.update(vars(obj))
                     except: pass
-                    
                 for attr in ["id", "name", "type", "content", "tool_calls", "invalid_tool_calls", "response_metadata", "additional_kwargs", "usage_metadata"]:
                     if hasattr(obj, attr):
                         val = getattr(obj, attr)
-                        if not callable(val):
-                            d[attr] = val
+                        if not callable(val): d[attr] = val
                 return d
-
-            def extract_msgs(obj):
-                extracted = []
-                if isinstance(obj, (list, tuple)):
-                    for item in obj:
-                        extracted.extend(extract_msgs(item))
-                elif isinstance(obj, dict):
-                    m_type = obj.get("type")
-                    # 딕셔너리 자체가 메시지인 경우 통째로 저장
-                    if isinstance(m_type, str) and m_type in ["ai", "tool", "ai_message", "tool_message"]:
-                        extracted.append(dump_msg(obj))
-                    else:
-                        for k, v in obj.items():
-                            extracted.extend(extract_msgs(v))
-                elif hasattr(obj, "type") and hasattr(obj, "content") and not isinstance(obj, type):
-                    extracted.append(dump_msg(obj))
-                return extracted
-
-            raw_msgs = extract_msgs(response_log)
-            
-            # AI / Tool 메시지만 추리기
-            msgs = []
-            for m in raw_msgs:
-                m_type = m.get("type", "")
-                if m_type in ["ai", "ai_message", "tool", "tool_message"]:
-                    if m_type == "ai_message": m["type"] = "ai"
-                    if m_type == "tool_message": m["type"] = "tool"
-                    msgs.append(m)
 
             def clean_think(text):
                 if not text: return ""
@@ -216,46 +164,70 @@ async def chat_endpoint(request: ChatRequest):
 
             clean_final = clean_think(str(response_content)).strip()
             
-            sys_content = "You are Biomni-R0, an advanced reasoning and acting agent. Use <think>...</think> tags to show your step-by-step reasoning process before acting. Use <execute> to run python code and gather data. Use <solution> to provide the final answer."
+            # 💡 [핵심] 텍스트 쪼가리인 response_log 대신, a1.py에 저장된 '실제 원본 상태 객체'를 가져옵니다.
+            raw_msgs = []
+            if hasattr(agent, "_conversation_state") and agent._conversation_state:
+                state_msgs = agent._conversation_state.get("messages", [])
+                for m in state_msgs:
+                    raw_msgs.append(dump_msg(m))
             
-            system_msg = dump_msg(SystemMessage(content=sys_content))
-            human_msg = dump_msg(HumanMessage(content=request.message))
-            
-            messages = [system_msg, human_msg]
+            messages = []
             seen_contents = set()
             
-            # 여기서부터 올려주신 "id", "tool_calls" 등의 긴 형식 그대로 수십 개의 과정이 들어갑니다.
-            for m in msgs:
-                m_copy = dict(m) 
-                m_type = m_copy.get("type")
-                content = str(m_copy.get("content", "") or "")
+            for m_dict in raw_msgs:
+                m_type = m_dict.get("type", "")
                 
+                # 1. System Message (think 프롬프트 추가)
+                if m_type == "system":
+                    m_dict["content"] = "You are Biomni-R0, an advanced reasoning and acting agent. Use <think>...</think> tags to show your step-by-step reasoning process before acting. Use <execute> to run python code and gather data. Use <solution> to provide the final answer."
+                    messages.append(m_dict)
+                    continue
+                    
+                # 2. Human Message
+                if m_type == "human":
+                    messages.append(m_dict)
+                    continue
+                
+                # 3. AI 및 Tool 메시지 처리
+                if m_type not in ["ai", "ai_message", "tool", "tool_message"]:
+                    continue
+                    
+                # 타입명 통일
+                if m_type == "ai_message": m_dict["type"] = "ai"
+                if m_type == "tool_message": m_dict["type"] = "tool"
+                m_type = m_dict["type"]
+                
+                content = str(m_dict.get("content", "") or "")
+                
+                if not content.strip():
+                    messages.append(m_dict)
+                    continue
+                    
                 clean_content = clean_think(content)
                 
                 if m_type == "tool":
-                    m_copy["content"] = clean_content
-                    messages.append(m_copy)
+                    m_dict["content"] = clean_content
+                    messages.append(m_dict)
                     continue
                     
                 if m_type == "ai":
-                    # 중복 답변 차단 (next_step: end 바로 위의 동일 답변 삭제)
+                    # 중복 답변 차단
                     if clean_content and clean_content in seen_contents:
                         continue
-                        
                     if clean_content:
                         seen_contents.add(clean_content)
                         
                     # 최종 답변(final_answer)과 완전히 동일한 경우 think로 감싸지 않음
                     if clean_content == clean_final:
-                        m_copy["content"] = clean_content
+                        m_dict["content"] = clean_content
                     else:
-                        # 중간 추론 과정은 내용이 있을 경우 전체를 <think>로 감싸기
+                        # 중간 추론 과정은 전체를 <think>로 예쁘게 감싸기
                         if clean_content.strip():
-                            m_copy["content"] = f"<think>\n{clean_content}\n</think>"
+                            m_dict["content"] = f"<think>\n{clean_content}\n</think>"
                         else:
-                            m_copy["content"] = ""
+                            m_dict["content"] = ""
                             
-                    messages.append(m_copy)
+                    messages.append(m_dict)
 
             refined_data = {
                 "trace_id": trace_id,
