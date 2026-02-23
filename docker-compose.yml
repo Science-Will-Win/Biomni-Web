@@ -19,7 +19,7 @@ services:
       - ./backend:/app/backend_code
       
       # 3. 데이터 저장소
-      - ./biomni_data:/app/data
+      - ./:/app/data
       - ./reasoning_logs:/app/logs
     ports:
       - "8000:8000"  # 로컬 8000포트를 컨테이너 8000포트와 연결

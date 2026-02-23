@@ -17,6 +17,15 @@ numpy
 pandas
 scipy
 biopython
+pyarrow
+fastparquet
+# 웹 크롤링 및 검색
+beautifulsoup4
+googlesearch-python
+
+# 생물정보학 관련 (로그에서 식별된 라이브러리)
+esm
+
 # 필요시 추가 (무거운 라이브러리는 로컬 설치 시 주의)
 # scanpy
 PyPDF2
