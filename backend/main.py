@@ -83,6 +83,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     logs: List[Any]  # Biomni의 response_log 구조에 따라 유연하게 설정
+    refined_data: Dict[str, Any] = {}
 
 @app.post("/api/chat", response_model=ChatResponse)
 @observe(name="Biomni Chat Interaction")
@@ -149,9 +150,9 @@ async def chat_endpoint(request: ChatRequest):
                 "final_answer": str(response_content)
             }
             
-            raw_file_path = os.path.join(raw_dir, f"trace_{trace_id}.json")
-            with open(raw_file_path, "w", encoding="utf-8") as f:
-                json.dump(raw_data, f, ensure_ascii=False, indent=4)
+            # raw_file_path = os.path.join(raw_dir, f"trace_{trace_id}.json")
+            # with open(raw_file_path, "w", encoding="utf-8") as f:
+            #     json.dump(raw_data, f, ensure_ascii=False, indent=4)
                 
             # ==============================================================
             # 2. 파인튜닝용 정제 데이터 (Refined Data) - Langfuse Observation 직접 파싱
@@ -277,16 +278,17 @@ async def chat_endpoint(request: ChatRequest):
                 "messages": messages
             }
             
-            refined_file_path = os.path.join(refined_dir, f"trace_{trace_id}.json")
-            with open(refined_file_path, "w", encoding="utf-8") as f:
-                json.dump(refined_data, f, ensure_ascii=False, indent=4)
+            # refined_file_path = os.path.join(refined_dir, f"trace_{trace_id}.json")
+            # with open(refined_file_path, "w", encoding="utf-8") as f:
+            #     json.dump(refined_data, f, ensure_ascii=False, indent=4)
                 
             logger.info(f"✅ Saved raw and refined trace data (DeepSeek R1 style) to {base_log_dir}")
 
         # 5. [수정됨] 로그를 포함하여 반환
         return {
             "response": str(response_content),
-            "logs": response_log # 프론트엔드에서 중간 과정을 시각화하기 위해 필수
+            "logs": response_log, # 프론트엔드에서 중간 과정을 시각화하기 위해 필수
+            "refined_data": refined_data if 'refined_data' in locals() else {}
         }
     
     except Exception as e:

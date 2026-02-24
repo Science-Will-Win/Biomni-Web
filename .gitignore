@@ -1,3 +1,4 @@
 .env
 biomni_data
 backend/__pycache__
+reasoning_logs
