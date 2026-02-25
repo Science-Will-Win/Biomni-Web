@@ -218,6 +218,10 @@ async def chat_endpoint(request: ChatRequest):
             seen_contents = set()
             clean_final = clean_think(str(response_content)).strip()
             
+            # 🌟 [추가된 부분] 두 가지 내용을 명시적으로 저장할 빈 리스트 생성
+            llm_thoughts = [] 
+            tool_results = []
+            
             for obs in observations:
                 obs_type = obs.get("type")
                 name = obs.get("name", "")
@@ -250,14 +254,28 @@ async def chat_endpoint(request: ChatRequest):
                 
                 if clean_content == clean_final:
                     continue
-                    
+                
+                # 🌟 [수정된 부분] GENERATION(생각)과 SPAN(도구 실행) 분리 및 별도 저장
                 if obs_type == "GENERATION":
                     think_steps.append(clean_content)
+                    llm_thoughts.append(clean_content)  # LLM의 생각 과정 저장
+                    
                 elif obs_type == "SPAN":
+                    # 도구에 들어간 입력값(Input)도 함께 추출 (추적에 매우 유용함)
+                    obs_input = obs.get("input", "")
+                    
+                    # Tool 실행 내역 저장 (이름, 입력값, 결과값)
+                    tool_results.append({
+                        "tool_name": name,
+                        "tool_input": obs_input,
+                        "tool_output": clean_content
+                    })
+                    
                     if "feedback" in name.lower() or "error" in name.lower():
                         think_steps.append(f"System Feedback:\n{clean_content}")
                     else:
-                        think_steps.append(f"Observation:\n{clean_content}")
+                        # R1 스타일 프롬프트에도 Tool 이름이 명시되도록 개선
+                        think_steps.append(f"Action (Tool: {name}):\nInput: {obs_input}\nObservation:\n{clean_content}")
 
             # 4. DeepSeek R1 스타일 조립
             combined_think = "\n\n".join(think_steps)
@@ -272,12 +290,17 @@ async def chat_endpoint(request: ChatRequest):
                 "additional_kwargs": {}, "response_metadata": {}
             })
 
+            # 🌟 [수정된 부분] refined_data 구조에 추출한 두 가지 리스트 추가
             refined_data = {
                 "trace_id": trace_id,
                 "final_answer": str(response_content),
-                "messages": messages
+                "messages": messages,
+                "llm_thoughts": llm_thoughts,  # LLM이 생각한 과정 배열
+                "tool_results": tool_results   # 각 도구의 이름/입력/결과 배열
             }
             
+            # (선택 사항) 만약 이 정제된 데이터를 실제 JSON 파일로 저장하고 싶으시다면 
+            # 아래 주석 처리된 코드를 해제(Uncomment)해 주세요.
             # refined_file_path = os.path.join(refined_dir, f"trace_{trace_id}.json")
             # with open(refined_file_path, "w", encoding="utf-8") as f:
             #     json.dump(refined_data, f, ensure_ascii=False, indent=4)
