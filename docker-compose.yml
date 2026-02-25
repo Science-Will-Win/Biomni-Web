@@ -22,5 +22,5 @@ services:
       - ./:/app/data
       - ./reasoning_logs:/app/logs
     ports:
-      - "8000:8000"  # 로컬 8000포트를 컨테이너 8000포트와 연결
+      - "8002:8000"  # 로컬 8000포트를 컨테이너 8000포트와 연결
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload

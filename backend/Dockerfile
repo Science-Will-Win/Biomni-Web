@@ -51,4 +51,4 @@ WORKDIR /app/backend_code
 RUN chmod +x entrypoint.sh
 
 EXPOSE 8000
-ENTRYPOINT ["./entrypoint.sh"]
+ENTRYPOINT ["/bin/bash", "/app/backend_code/entrypoint.sh"]
