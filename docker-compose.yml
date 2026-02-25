@@ -16,7 +16,7 @@ services:
       - ../Biomni:/app/biomni_repo
       
       # 2. 백엔드 서버 코드(main.py 등)도 로컬과 동기화 (수정 시 바로 반영)
-      - ./backend:/app/backend_code
+      - ./Biomni-Web/backend:/app/backend_code
       
       # 3. 데이터 저장소
       - ./:/app/data
