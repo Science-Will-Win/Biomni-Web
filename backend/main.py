@@ -113,11 +113,6 @@ async def chat_endpoint(request: ChatRequest):
         if api_response.status_code == 200:
             full_trace_data = api_response.json()
             
-            # <think> 태그와 내용만 깔끔하게 제거하는 함수
-            def clean_think(text):
-                if not text: return ""
-                return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
-
             def find_system_content(obj):
                 if isinstance(obj, dict):
                     if obj.get("type") in ["system", "system_message"] and "content" in obj:
@@ -191,7 +186,7 @@ async def chat_endpoint(request: ChatRequest):
     
     except Exception as e:
         logger.error(f"Error during execution: {e}")
-        langfuse_context.update_current_trace(level="ERROR", status_message=str(e))
+        langfuse_context.update_current_trace(status_message=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
