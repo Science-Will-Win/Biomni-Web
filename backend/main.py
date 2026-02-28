@@ -78,7 +78,24 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     logs: List[Any]
+    raw_data: List[Any] = []  # 원본 로그 데이터를 담을 필드 추가
     refined_data: Dict[str, Any] = {}
+
+def sanitize_for_json(obj):
+    """복잡한 AI 객체를 JSON으로 변환 가능한 기본 타입으로 분해하는 함수"""
+    if isinstance(obj, dict):
+        return {str(k): sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple, set)):
+        return [sanitize_for_json(i) for i in obj]
+    elif hasattr(obj, "dict") and callable(getattr(obj, "dict")):
+        try: return sanitize_for_json(obj.dict())
+        except: pass
+    elif hasattr(obj, "model_dump") and callable(getattr(obj, "model_dump")):
+        try: return sanitize_for_json(obj.model_dump())
+        except: pass
+    elif isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+    return str(obj) # 변환할 수 없는 객체는 문자열로 강제 변환하여 에러 방지
 
 @app.post("/api/chat", response_model=ChatResponse)
 @observe(name="Biomni Chat Interaction")
@@ -113,11 +130,6 @@ async def chat_endpoint(request: ChatRequest):
         if api_response.status_code == 200:
             full_trace_data = api_response.json()
             
-            # <think> 태그와 내용만 깔끔하게 제거하는 함수
-            def clean_think(text):
-                if not text: return ""
-                return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
-
             def find_system_content(obj):
                 if isinstance(obj, dict):
                     if obj.get("type") in ["system", "system_message"] and "content" in obj:
@@ -139,7 +151,7 @@ async def chat_endpoint(request: ChatRequest):
             
             # 1. System Message (맨 처음에 한 번만)
             extracted_sys_content = find_system_content(full_trace_data)
-            sys_content = clean_think(extracted_sys_content) if extracted_sys_content else "You are Biomni, an advanced reasoning and acting agent."
+            sys_content = extracted_sys_content
             messages.append({"type": "system", "content": sys_content})
             
             # 2. LangGraph span 찾기
@@ -159,7 +171,7 @@ async def chat_endpoint(request: ChatRequest):
             # 3. [핵심] 어떠한 조건 검사나 덮어쓰기 없이, 발생한 턴을 100% 순차적으로 추가!
             for msg in langgraph_messages:
                 m_type = msg.get("type", "")
-                m_content = clean_think(msg.get("content", ""))
+                m_content = msg.get("content", "")
                 
                 if not m_content:
                     continue
@@ -179,19 +191,21 @@ async def chat_endpoint(request: ChatRequest):
 
             refined_data = {
                 "trace_id": trace_id,
-                "final_answer": clean_think(str(response_content)),
+                "final_answer": str(response_content),
                 "messages": messages
             }
 
+        safe_logs = sanitize_for_json(response_log)
         return {
             "response": str(response_content),
-            "logs": response_log,
+            "logs": safe_logs,
+            "raw_data": safe_logs,  # 중요하다고 하신 원본 로그 데이터
             "refined_data": refined_data if 'refined_data' in locals() else {}
         }
     
     except Exception as e:
         logger.error(f"Error during execution: {e}")
-        langfuse_context.update_current_trace(level="ERROR", status_message=str(e))
+        langfuse_context.update_current_trace(tags=["ERROR"], metadata={"error": str(e)})
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

@@ -1,4 +1,3 @@
-# docker-compose.yml
 version: '3.8'
 
 services:
@@ -8,19 +7,7 @@ services:
     env_file:
       - .env
     environment:
-      # [중요] 컨테이너가 마운트된 ../Biomni 폴더를 Python 경로로 인식하게 함
       - PYTHONPATH=/app/biomni_repo:$PYTHONPATH
       - BIOMNI_DATA_PATH=/app/data
-    volumes:
-      # 1. 로컬의 Biomni 원본 소스를 컨테이너 내부로 연결
-      - ../Biomni:/app/biomni_repo
-      
-      # 2. 백엔드 서버 코드(main.py 등)도 로컬과 동기화 (수정 시 바로 반영)
-      - ./backend:/app/backend_code
-      
-      # 3. 데이터 저장소
-      - ./:/app/data
-      - ./reasoning_logs:/app/logs
     ports:
-      - "8002:8000"  # 로컬 8000포트를 컨테이너 8000포트와 연결
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+      - "8002:8000"
