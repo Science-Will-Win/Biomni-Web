@@ -236,6 +236,15 @@ async def chat_endpoint(request: ChatRequest):
         langfuse_context.update_current_trace(tags=["ERROR"], metadata={"error": str(e)})
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.delete("/api/session/{session_id}")
+async def delete_session(session_id: str):
+    """배치 처리가 끝난 후 메모리 누수를 방지하기 위해 세션(에이전트)을 삭제합니다."""
+    if session_id in active_sessions:
+        del active_sessions[session_id]
+        logger.info(f"Session {session_id} cleaned up successfully.")
+        return {"status": "success", "message": "Session deleted"}
+    return {"status": "not_found"}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
