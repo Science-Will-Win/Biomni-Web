@@ -176,13 +176,25 @@ async def chat_endpoint(request: ChatRequest):
             
             langgraph_messages = []
             for obs in observations:
-                if obs.get("name", "").lower() == "langgraph":
+                obs_name = obs.get("name", "").lower()
+                
+                # --- [추가됨] Tool Retrieval 스팬 추출 ---
+                if "tool retrieval" in obs_name or "tool_retrieval" in obs_name:
+                    req_val = obs.get("input", "")
+                    res_val = obs.get("output", "")
+                    
+                    if req_val:
+                        messages.append({"type": "tool_retrieval", "content": str(req_val)})
+                    if res_val:
+                        messages.append({"type": "Result", "content": str(res_val)})
+                        
+                # --- [기존] LangGraph 스팬 추출 ---
+                elif obs_name == "langgraph":
                     obs_output = obs.get("output", {})
                     if isinstance(obs_output, dict) and "messages" in obs_output:
                         langgraph_messages = obs_output["messages"]
                     elif isinstance(obs.get("input"), dict) and "messages" in obs["input"]:
                         langgraph_messages = obs["input"]["messages"]
-                    break
             
             # 3. [핵심] 어떠한 조건 검사나 덮어쓰기 없이, 발생한 턴을 100% 순차적으로 추가!
             for msg in langgraph_messages:
