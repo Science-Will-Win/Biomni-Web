@@ -63,17 +63,17 @@ app.add_middleware(
 active_sessions: Dict[str, A1] = {}
 
 def get_or_create_agent(session_id: str) -> A1:
-    """세션 ID별로 독립된 에이전트와 작업 폴더를 할당하는 함수"""
+    """세션 ID별로 에이전트를 생성하되, 데이터 경로는 공유하는 함수"""
     if session_id not in active_sessions:
         logger.info(f"Initializing new Biomni Agent for session: {session_id}")
-        base_data_path = os.getenv("BIOMNI_DATA_PATH", "../biomni_data")
         
-        # 다중 사용자가 충돌하지 않도록 세션별 전용 폴더 경로 생성
-        user_data_path = os.path.join(base_data_path, session_id)
-        os.makedirs(user_data_path, exist_ok=True)
+        # 공용 베이스 폴더 경로만 사용
+        base_data_path = os.getenv("BIOMNI_DATA_PATH", "../biomni_data")
+        os.makedirs(base_data_path, exist_ok=True)
         
         try:
-            active_sessions[session_id] = A1(path=user_data_path)
+            # 개별 폴더(user_data_path) 대신 공용 폴더(base_data_path)를 바라보게 수정
+            active_sessions[session_id] = A1(path=base_data_path)
             logger.info(f"Biomni Agent initialized successfully for {session_id}.")
         except Exception as e:
             logger.error(f"Failed to initialize Biomni Agent for {session_id}: {e}")

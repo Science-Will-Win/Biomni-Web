@@ -10,6 +10,10 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
+ENV UV_CACHE_DIR=/raid/sww/.cache/uv
+ENV PIP_CACHE_DIR=/raid/sww/.cache/pip
+ENV XDG_CACHE_HOME=/raid/sww/.cache
+
 RUN conda install -y -c conda-forge -c bioconda \
     python=3.11 \
     blast samtools bowtie2 bwa bedtools fastqc trimmomatic \
@@ -19,11 +23,12 @@ RUN conda install -y -c conda-forge -c bioconda \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-RUN pip install "git+https://github.com/YosefLab/popV.git@refs/pull/100/head" \
-    && pip install "git+https://github.com/pylabrobot/pylabrobot.git" \
-    && pip install uv \
+RUN pip install --no-cache-dir "git+https://github.com/YosefLab/popV.git@refs/pull/100/head" \
+    && pip install --no-cache-dir "git+https://github.com/pylabrobot/pylabrobot.git" \
+    && pip install --no-cache-dir uv \
     && uv pip install transcriptformer --system \
-    && uv tool install arc-state
+    && uv tool install arc-state \
+    && rm -rf /root/.cache/pip /root/.cache/uv
 
 RUN Rscript -e "install.packages(c('ggplot2', 'lme4', 'dplyr', 'tidyr', 'readr', 'stringr', 'Matrix', 'Rcpp', 'devtools', 'remotes', 'harmony', 'WGCNA', 'BiocManager'), repos='https://cran.rstudio.com/')" \
     && Rscript -e "BiocManager::install(c('DESeq2', 'dada2', 'xcms', 'flowCore', 'edgeR', 'limma', 'clusterProfiler', 'impute', 'preprocessCore', 'GO.db', 'AnnotationDbi'), ask=FALSE)"
