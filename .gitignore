@@ -1,6 +1,6 @@
 .env
 biomni_data
-*/__pycache__/*
+*/__pycache__
 reasoning_logs
 .pybiomart.sqlite
 frontend/.claude
