@@ -127,10 +127,10 @@ class LLMService:
 
         for name, mc in self._registry.get("models", {}).items():
             # Local models: require both local_path and physical folder
-            if mc["type"] == "local":
-                local_path = mc.get("local_path")
-                if not local_path or not (models_dir / local_path).is_dir():
-                    continue  # Skip: no folder or no local_path defined
+            # if mc["type"] == "local":
+            #     local_path = mc.get("local_path")
+            #     if not local_path or not (models_dir / local_path).is_dir():
+            #         continue  # Skip: no folder or no local_path defined
 
             if name == self._active_model:
                 status = "active"
@@ -215,7 +215,7 @@ class LLMService:
         if resolved_temperature is None:
             resolved_temperature = 0.7
         if resolved_max_tokens is None:
-            resolved_max_tokens = 32768
+            resolved_max_tokens = 16384 # 32768
         if resolved_top_k is None:
             resolved_top_k = 50
 

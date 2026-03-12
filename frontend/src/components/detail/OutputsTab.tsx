@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { useAppContext } from '@/context/AppContext';
 import { useChatContext } from '@/context/ChatContext';
 import { listStepOutputs, getStepOutputUrl } from '@/api/files';
@@ -16,19 +16,31 @@ export function OutputsTab() {
   const data = appState.detailPanelData;
   const convId = chatState.conversationId;
 
-  if (!data || data.results.length === 0) {
-    return (
-      <div className="detail-empty-state">
-        <p>{t('empty.outputs_hint') !== 'empty.outputs_hint'
-          ? t('empty.outputs_hint')
-          : 'Step results will appear here.'}</p>
-      </div>
-    );
-  }
+  // 결과 데이터 존재 여부
+  const hasResults = data && data.results.length > 0;
 
   return (
     <div className="detail-outputs-content">
-      {data.results.map((result, i) => {
+      
+      {/* 추가: 전체 실행 에러가 존재하면 결과 탭 최상단에 명확하게 표시합니다. */}
+      {chatState.error && (
+        <div className="output-error" style={{ marginBottom: '16px', padding: '12px', borderRadius: 'var(--radius-md)', border: '1px solid currentColor' }}>
+          <strong style={{ display: 'block', marginBottom: '4px' }}>Execution Error</strong>
+          {chatState.error}
+        </div>
+      )}
+
+      {/* 결과가 없을 때의 빈 상태 표시 */}
+      {!hasResults && (
+        <div className="detail-empty-state">
+          <p>{t('empty.outputs_hint') !== 'empty.outputs_hint'
+            ? t('empty.outputs_hint')
+            : 'Step results will appear here.'}</p>
+        </div>
+      )}
+
+      {/* 툴 실행 결과 렌더링 */}
+      {hasResults && data.results.map((result, i) => {
         const step = data.steps[result.step - 1] || data.steps[i];
         return (
           <StepOutputSection
@@ -112,7 +124,7 @@ function ToolResultDetail({ result }: { result: unknown }) {
     return <pre className="result-text">{result}</pre>;
   }
 
-  const parts: JSX.Element[] = [];
+  const parts: ReactNode[] = [];
 
   // Title
   if (r.title && typeof r.title === 'string') {
