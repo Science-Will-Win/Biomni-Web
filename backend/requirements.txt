@@ -124,3 +124,6 @@ fair-esm
 nnunet
 nibabel
 nilearn
+
+asyncpg
+psycopg2-binary

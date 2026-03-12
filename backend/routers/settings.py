@@ -15,7 +15,13 @@ from models.schemas import (
 from services.llm_service import get_llm_service
 from services.prompt_builder import PromptMode, build_prompt
 
+from dotenv import set_key
+from pathlib import Path
+
 router = APIRouter(prefix="/api", tags=["settings"])
+
+# config.py 기준 .env 경로
+ENV_PATH = Path("/app/biomni_repo/../.env")
 
 # DB keys
 _KEY_SETTINGS = "settings"
@@ -146,3 +152,10 @@ async def set_system_prompt(
     else:
         await _delete_setting(db, _KEY_SYSTEM_PROMPT)
         return StatusResponse(status="ok", message="System prompt reset to default")
+
+@router.post("/api_keys")
+async def update_api_key(provider: str, api_key: str):
+    # 예: provider가 "OPENAI"라면 OPENAI_API_KEY 수정
+    env_key = f"{provider.upper()}_API_KEY"
+    set_key(str(ENV_PATH), env_key, api_key)
+    return {"status": "ok", "message": f"{env_key} updated in .env"}
