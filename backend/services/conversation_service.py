@@ -299,3 +299,13 @@ class ConversationService:
             if extra:
                 d["metadata"] = extra
         return d
+    
+    async def get_messages(self, conv_id: UUID) -> list[Message]:
+        """Fetch all messages for a given conversation ordered by ID."""
+        stmt = (
+            select(Message)
+            .where(Message.conversation_id == conv_id)
+            .order_by(Message.id.asc())
+        )
+        result = await self._db.execute(stmt)
+        return list(result.scalars().all())

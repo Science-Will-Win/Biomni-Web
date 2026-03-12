@@ -181,6 +181,13 @@ class FileUploadResponse(BaseModel):
 
 # ─── Plan ───
 
+class PlanRequest(BaseModel):
+    prompt: str
+    conv_id: str
+
+class PlanResponse(BaseModel):
+    plan: str
+
 class ReplanRequest(BaseModel):
     conv_id: str
     steps: List[Dict[str, Any]] = []
