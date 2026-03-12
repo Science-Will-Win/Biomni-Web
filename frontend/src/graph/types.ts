@@ -61,9 +61,9 @@ export interface GraphState {
 export interface SerializedGraphState {
   nodes: NodeData[];
   connections: ConnectionData[];
-  panX: number;
-  panY: number;
-  scale: number;
+  panX?: number;
+  panY?: number;
+  scale?: number;
 }
 
 export interface PlanStep {

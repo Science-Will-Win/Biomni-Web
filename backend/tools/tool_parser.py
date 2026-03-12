@@ -212,24 +212,40 @@ def _closing_tag(open_tag: str) -> str:
 # ═══════════════════════════════════════════
 
 # Mistral/Ministral format patterns
+# [\w.]+ to support dotted names like biomni.tool.literature.query_pubmed
 _MISTRAL_PATTERN_WITH_ARGS = re.compile(
-    r"\[TOOL_CALLS\](\w+)\[ARGS\](\{.*?\})(?=\[TOOL_CALLS\]|$|\s*$)",
+    r"\[TOOL_CALLS\]([\w.]+)\[ARGS\](\{.*?\})(?=\[TOOL_CALLS\]|$|\s*$)",
     re.DOTALL,
 )
 _MISTRAL_PATTERN_NO_ARGS = re.compile(
-    r"\[TOOL_CALLS\](\w+)(\{.*?\})(?=\[TOOL_CALLS\]|$|\s*$)",
+    r"\[TOOL_CALLS\]([\w.]+)(\{.*?\})(?=\[TOOL_CALLS\]|$|\s*$)",
+    re.DOTALL,
+)
+# Biomni tool pattern: [TOOL_CALLS]biomni.tool.module.func {json} (space separated)
+_BIOMNI_TOOL_PATTERN = re.compile(
+    r"\[TOOL_CALLS\](biomni\.tool\.[\w.]+)\s+(\{.*?\})(?=\[TOOL_CALLS\]|$|\s*$)",
     re.DOTALL,
 )
 
 
 def _parse_mistral_format(text: str) -> ParseResult:
-    """Parse [TOOL_CALLS]name[ARGS]{...} format."""
+    """Parse [TOOL_CALLS]name[ARGS]{...} format.
+
+    Also handles Biomni tool calls like:
+      [TOOL_CALLS]biomni.tool.literature.query_pubmed {"query": "..."}
+    These are auto-converted to code_gen calls with executable Python code.
+    """
     tool_calls: List[ParsedToolCall] = []
     remaining = text
 
     # Try with [ARGS] first
     matches = _MISTRAL_PATTERN_WITH_ARGS.findall(text)
     pattern = _MISTRAL_PATTERN_WITH_ARGS
+
+    if not matches:
+        # Try Biomni space-separated pattern before no-args
+        matches = _BIOMNI_TOOL_PATTERN.findall(text)
+        pattern = _BIOMNI_TOOL_PATTERN
 
     if not matches:
         matches = _MISTRAL_PATTERN_NO_ARGS.findall(text)
@@ -249,6 +265,7 @@ def _parse_mistral_format(text: str) -> ParseResult:
 
     remaining = pattern.sub("", remaining).strip()
     return ParseResult(remaining_text=remaining, tool_calls=tool_calls)
+
 
 
 def _parse_legacy_formats(text: str) -> ParseResult:

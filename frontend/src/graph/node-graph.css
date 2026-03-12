@@ -63,11 +63,18 @@
     width: 0;
     height: 0;
     will-change: transform;
+    z-index: 2;
 }
 
 .node-graph-svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
     pointer-events: none;
     overflow: visible;
+    z-index: 1;
 }
 
 .node-graph-svg path {
@@ -243,6 +250,15 @@
 .ng-port[data-port-type="any"]     { border-color: var(--port-any); }
 .ng-port[data-port-type="matrix"]  { border-color: var(--port-matrix); }
 .ng-port[data-port-type="boolean"] { border-color: var(--port-boolean); }
+.ng-port[data-port-type="numeric"] { border-color: var(--port-numeric); }
+.ng-port[data-port-type="addable"] { border-color: var(--port-addable); }
+.ng-port[data-port-type="double"]  { border-color: var(--port-double); }
+.ng-port[data-port-type="vector2"] { border-color: var(--port-vector2); }
+.ng-port[data-port-type="vector3"] { border-color: var(--port-vector3); }
+.ng-port[data-port-type="vector4"] { border-color: var(--port-vector4); }
+.ng-port[data-port-type="color"]   { border-color: var(--port-color-port); }
+.ng-port[data-port-type="table"]   { border-color: var(--port-table); }
+.ng-port[data-port-type="image"]   { border-color: var(--port-image); }
 
 .ng-port[data-port-type="float"]:hover   { background: var(--port-float); border-color: var(--port-float); }
 .ng-port[data-port-type="int"]:hover     { background: var(--port-int); border-color: var(--port-int); }
@@ -251,6 +267,31 @@
 .ng-port[data-port-type="any"]:hover     { background: var(--port-any); border-color: var(--port-any); }
 .ng-port[data-port-type="matrix"]:hover  { background: var(--port-matrix); border-color: var(--port-matrix); }
 .ng-port[data-port-type="boolean"]:hover { background: var(--port-boolean); border-color: var(--port-boolean); }
+.ng-port[data-port-type="numeric"]:hover { background: var(--port-numeric); border-color: var(--port-numeric); }
+.ng-port[data-port-type="addable"]:hover { background: var(--port-addable); border-color: var(--port-addable); }
+.ng-port[data-port-type="double"]:hover  { background: var(--port-double); border-color: var(--port-double); }
+.ng-port[data-port-type="vector2"]:hover { background: var(--port-vector2); border-color: var(--port-vector2); }
+.ng-port[data-port-type="vector3"]:hover { background: var(--port-vector3); border-color: var(--port-vector3); }
+.ng-port[data-port-type="vector4"]:hover { background: var(--port-vector4); border-color: var(--port-vector4); }
+.ng-port[data-port-type="color"]:hover   { background: var(--port-color-port); border-color: var(--port-color-port); }
+.ng-port[data-port-type="table"]:hover   { background: var(--port-table); border-color: var(--port-table); }
+.ng-port[data-port-type="image"]:hover   { background: var(--port-image); border-color: var(--port-image); }
+
+/* Port highlighting during connection drag */
+.ng-port-compatible {
+    box-shadow: 0 0 3px currentColor;
+    transform: scale(1.3);
+}
+.ng-port-dimmed {
+    border-color: #ccc !important;
+    background: #eee !important;
+    opacity: 0.4;
+    pointer-events: none;
+}
+.ng-port-snap {
+    box-shadow: 0 0 6px var(--primary-color, #3b82f6);
+    transform: scale(1.5);
+}
 
 /* ---- Connections ---- */
 
@@ -282,6 +323,23 @@
     stroke: var(--error, #ef4444);
     stroke-width: 3.5;
 }
+
+/* Connection type colors — target only visible stroke path, not hit area */
+.ng-conn-type-float   .ng-conn-stroke { stroke: var(--port-float); }
+.ng-conn-type-int     .ng-conn-stroke { stroke: var(--port-int); }
+.ng-conn-type-string  .ng-conn-stroke { stroke: var(--port-string); }
+.ng-conn-type-data    .ng-conn-stroke { stroke: var(--port-data); }
+.ng-conn-type-matrix  .ng-conn-stroke { stroke: var(--port-matrix); }
+.ng-conn-type-numeric .ng-conn-stroke { stroke: var(--port-numeric); }
+.ng-conn-type-addable .ng-conn-stroke { stroke: var(--port-addable); }
+.ng-conn-type-boolean .ng-conn-stroke { stroke: var(--port-boolean); }
+.ng-conn-type-double  .ng-conn-stroke { stroke: var(--port-double); }
+.ng-conn-type-vector2 .ng-conn-stroke { stroke: var(--port-vector2); }
+.ng-conn-type-vector3 .ng-conn-stroke { stroke: var(--port-vector3); }
+.ng-conn-type-vector4 .ng-conn-stroke { stroke: var(--port-vector4); }
+.ng-conn-type-color   .ng-conn-stroke { stroke: var(--port-color-port); }
+.ng-conn-type-table   .ng-conn-stroke { stroke: var(--port-table); }
+.ng-conn-type-image   .ng-conn-stroke { stroke: var(--port-image); }
 
 /* ---- Input Node Styles ---- */
 
@@ -316,6 +374,135 @@ textarea.ng-input-node-field {
     line-height: 1.4;
     min-height: 28px;
     flex: 1 1 auto;
+}
+
+/* ---- Color Node ---- */
+
+.ng-color-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+.ng-color-picker {
+    width: 32px;
+    height: 24px;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.ng-color-hex {
+    width: 72px !important;
+    font-size: 11px !important;
+    padding: 2px 6px !important;
+}
+
+.ng-color-fields {
+    display: flex;
+    gap: 4px;
+}
+
+.ng-color-field-label {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    font-size: 9px;
+    color: var(--text-muted);
+    flex: 1;
+}
+
+.ng-color-field-label .ng-matrix-cell {
+    width: 100%;
+    text-align: center;
+    font-size: 10px;
+    padding: 2px 4px;
+    background: var(--bg-color, #1a1a1a);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    color: var(--text-color);
+    font-family: 'Fira Code', monospace;
+    outline: none;
+    box-sizing: border-box;
+}
+
+.ng-color-field-label .ng-matrix-cell:focus {
+    border-color: var(--primary-color, #3b82f6);
+}
+
+/* ---- Data Node ---- */
+
+.ng-data-body {
+    padding: 6px 10px 8px;
+}
+
+.ng-data-browse-btn {
+    width: 100%;
+    padding: 6px;
+    font-size: 11px;
+    background: var(--input-bg, var(--bg-secondary));
+    border: 1px dashed var(--border-color);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.ng-data-browse-btn:hover {
+    border-color: var(--primary-color, #3b82f6);
+    color: var(--text-color);
+}
+
+.ng-data-file-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    padding: 4px 0;
+}
+
+.ng-data-file-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-color);
+}
+
+.ng-data-file-size {
+    color: var(--text-muted);
+    font-size: 10px;
+    flex-shrink: 0;
+}
+
+.ng-data-remove-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 2px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.ng-data-remove-btn:hover {
+    color: var(--error, #ef4444);
+}
+
+.ng-data-preview {
+    font-size: 10px;
+    color: var(--text-muted);
+    background: var(--bg-color, #1a1a1a);
+    padding: 4px 6px;
+    border-radius: 3px;
+    margin-top: 4px;
+    max-height: 60px;
+    overflow: hidden;
+    white-space: pre-wrap;
+    font-family: 'Fira Code', monospace;
 }
 
 /* ---- Status Colors ---- */
@@ -468,6 +655,28 @@ textarea.ng-input-node-field {
     border-color: var(--primary-color);
 }
 
+.ng-help-btn {
+    width: 24px;
+    height: 24px;
+    border: 1px solid var(--border-color);
+    border-radius: 50%;
+    background: var(--card-bg);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 4px;
+}
+
+.ng-help-btn:hover {
+    background: var(--card-bg-hover);
+    color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
 /* ---- Create Node Menu ---- */
 
 .ng-create-menu {
@@ -556,30 +765,33 @@ textarea.ng-input-node-field {
 
 .ng-resize-handle {
     position: absolute;
-    z-index: 25;
+    z-index: 15;
     background: transparent;
+    opacity: 0;
 }
 
-.ng-resize-handle:hover {
-    background: rgba(59, 130, 246, 0.3);
+.ng-node:hover .ng-resize-handle,
+.ng-node-selected .ng-resize-handle {
+    opacity: 1;
 }
 
-.ng-resize-nw { top: -3px; left: -3px; width: 8px; height: 8px; cursor: nw-resize; }
-.ng-resize-n  { top: -3px; left: 8px; right: 8px; height: 6px; cursor: n-resize; }
-.ng-resize-ne { top: -3px; right: -3px; width: 8px; height: 8px; cursor: ne-resize; }
-.ng-resize-e  { top: 8px; right: -3px; bottom: 8px; width: 6px; cursor: e-resize; }
-.ng-resize-se { bottom: -3px; right: -3px; width: 8px; height: 8px; cursor: se-resize; }
-.ng-resize-s  { bottom: -3px; left: 8px; right: 8px; height: 6px; cursor: s-resize; }
-.ng-resize-sw { bottom: -3px; left: -3px; width: 8px; height: 8px; cursor: sw-resize; }
-.ng-resize-w  { top: 8px; left: -3px; bottom: 8px; width: 6px; cursor: w-resize; }
+.ng-resize-nw { top: -4px; left: -4px; width: 10px; height: 10px; cursor: nw-resize; }
+.ng-resize-n  { top: -3px; left: 10px; right: 10px; height: 6px; cursor: n-resize; }
+.ng-resize-ne { top: -4px; right: -4px; width: 10px; height: 10px; cursor: ne-resize; }
+.ng-resize-e  { top: 10px; right: -3px; bottom: 10px; width: 6px; cursor: e-resize; }
+.ng-resize-se { bottom: -4px; right: -4px; width: 10px; height: 10px; cursor: se-resize; }
+.ng-resize-s  { bottom: -3px; left: 10px; right: 10px; height: 6px; cursor: s-resize; }
+.ng-resize-sw { bottom: -4px; left: -4px; width: 10px; height: 10px; cursor: sw-resize; }
+.ng-resize-w  { top: 10px; left: -3px; bottom: 10px; width: 6px; cursor: w-resize; }
 
-/* Corner handles have dots visible on hover */
-.ng-resize-nw:hover,
-.ng-resize-ne:hover,
-.ng-resize-se:hover,
-.ng-resize-sw:hover {
+/* Corner handles visible on hover/select */
+.ng-resize-nw,
+.ng-resize-ne,
+.ng-resize-se,
+.ng-resize-sw {
     border-radius: 50%;
-    background: rgba(59, 130, 246, 0.6);
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.5);
 }
 
 /* ---- Marquee Selection ---- */

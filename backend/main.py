@@ -65,6 +65,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Tool Service init failed: {e}")
 
+    # Initialize Biomni Tool Loader (loads 224 tool descriptions from biomni framework)
+    try:
+        from services.biomni_tools import BiomniToolLoader
+        biomni_loader = BiomniToolLoader.get_instance()
+        biomni_loader.initialize()
+    except Exception as e:
+        logger.warning(f"BiomniToolLoader init failed: {e}")
+
     yield
     logger.info("Shutting down aigen_server...")
     try:

@@ -32,9 +32,7 @@ export function PortRow({ nodeId, ports, dir }: PortRowProps) {
             e.stopPropagation();
             onPortMouseDown?.(e, nodeId, port.name, dir, port.type);
           }}
-        >
-          {port.label && <span className="ng-port-label">{port.label}</span>}
-        </div>
+        />
       ))}
     </div>
   );

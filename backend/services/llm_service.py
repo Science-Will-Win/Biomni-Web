@@ -314,6 +314,7 @@ class LLMService:
             "tool_calls_format": mc.get("tool_calls_format"),
             "refusal": refusal if refusal else None,
             "system_prompt": mc.get("system_prompt"),
+            "use_llm_retrieval": mc.get("use_llm_retrieval", False),
         }
 
     # ─── API Key Management ───

@@ -65,11 +65,9 @@ export function MessageActions({ messageIndex, role, content, onEdit }: Props) {
       <button className="message-action-btn" onClick={handleCopy} title={copied ? 'Copied' : 'Copy'}>
         {copied ? <Check size={14} /> : <Copy size={14} />}
       </button>
-      {role === 'user' && (
-        <button className="message-action-btn delete-btn" onClick={handleDelete} title="Delete">
-          <Trash2 size={14} />
-        </button>
-      )}
+      <button className="message-action-btn delete-btn" onClick={handleDelete} title="Delete">
+        <Trash2 size={14} />
+      </button>
       {role === 'assistant' && (
         <button className="message-action-btn" onClick={handleRegenerate} title="Regenerate">
           <RefreshCw size={14} />

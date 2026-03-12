@@ -47,6 +47,8 @@ export function GraphPopout({ children, onClose, title = 'Graph Editor' }: Props
     div.style.width = '100vw';
     div.style.height = '100vh';
     div.style.position = 'relative';
+    div.style.display = 'flex';
+    div.style.flexDirection = 'column';
     win.document.body.appendChild(div);
     setContainer(div);
 

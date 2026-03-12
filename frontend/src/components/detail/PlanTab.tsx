@@ -2,17 +2,12 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAppContext } from '@/context/AppContext';
-import { useChatContext } from '@/context/ChatContext';
-import { useWebSocket } from '@/context/WebSocketContext';
-import { truncateConversation } from '@/api/conversations';
 import { analyzePlan } from '@/api/plan';
 import { useTranslation } from '@/i18n';
 import { RefreshCw, Loader, AlertCircle } from 'lucide-react';
 
 export function PlanTab() {
   const { state, dispatch: appDispatch } = useAppContext();
-  const { state: chatState, dispatch: chatDispatch } = useChatContext();
-  const { sendMessage, isStreaming } = useWebSocket();
   const { t } = useTranslation();
   const data = state.detailPanelData;
 
@@ -30,9 +25,11 @@ export function PlanTab() {
 
   const requestAnalysis = useCallback(
     async (force = false) => {
+      console.log('[PlanTab] requestAnalysis called', { force, hasData: !!data, hasAnalysis: !!data?.analysis, allStepsDone });
       if (!data || (!force && data.analysis)) return;
       if (!allStepsDone && !force) return;
 
+      console.log('[PlanTab] Starting analysis request...');
       setLoading(true);
       setError('');
       try {
@@ -50,6 +47,7 @@ export function PlanTab() {
           current_step: data.currentStep,
         });
 
+        console.log('[PlanTab] analyzePlan response:', { success: res.success, analysisLen: res.analysis?.length, error: res.error });
         if (res.success && res.analysis) {
           appDispatch({ type: 'SET_ANALYSIS', payload: res.analysis });
         } else {
@@ -66,6 +64,7 @@ export function PlanTab() {
 
   // Auto-request analysis when plan completes (once)
   useEffect(() => {
+    console.log('[PlanTab] Effect check:', { allStepsDone, hasData: !!data, hasAnalysis: !!data?.analysis, requested: requestedRef.current, stepsCount: data?.steps.length, stepStatuses: data?.steps.map(s => s.status) });
     if (allStepsDone && data && !data.analysis && !requestedRef.current) {
       requestedRef.current = true;
       requestAnalysis();
@@ -75,31 +74,6 @@ export function PlanTab() {
       requestedRef.current = false;
     }
   }, [allStepsDone, data, requestAnalysis]);
-
-  const handleReplan = async () => {
-    if (isStreaming) return;
-    const convId = chatState.conversationId;
-    if (!convId) return;
-
-    const messages = chatState.messages;
-    let userMsgIndex = -1;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'user') {
-        userMsgIndex = i;
-        break;
-      }
-    }
-    if (userMsgIndex < 0) return;
-
-    const userContent = messages[userMsgIndex].content;
-    try {
-      await truncateConversation(convId, userMsgIndex);
-      chatDispatch({ type: 'TRUNCATE_FROM', payload: userMsgIndex });
-      sendMessage(userContent);
-    } catch (err) {
-      chatDispatch({ type: 'SET_ERROR', payload: String(err) });
-    }
-  };
 
   // No plan data yet
   if (!data) {
@@ -134,29 +108,7 @@ export function PlanTab() {
   }
 
   return (
-    <div className="plan-content">
-      {/* Top action bar: Replan + Regenerate */}
-      <div className="plan-goal-actions" style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', padding: '8px 12px 0' }}>
-        <button
-          className="plan-regen-btn"
-          onClick={handleReplan}
-          disabled={isStreaming}
-          title="Regenerate Plan"
-        >
-          <RefreshCw size={14} />
-          <span style={{ marginLeft: 4, fontSize: 12 }}>Replan</span>
-        </button>
-        <button
-          className="plan-regen-btn"
-          onClick={() => requestAnalysis(true)}
-          disabled={loading || isStreaming}
-          title="Regenerate Analysis"
-        >
-          <RefreshCw size={14} />
-          <span style={{ marginLeft: 4, fontSize: 12 }}>Regenerate</span>
-        </button>
-      </div>
-
+    <div className="detail-plan-content">
       {/* Error */}
       {error && (
         <div className="detail-error-banner">
@@ -165,22 +117,32 @@ export function PlanTab() {
         </div>
       )}
 
-      {/* Analysis markdown */}
+      {/* Analysis markdown — rendered directly in detail-plan-content (matches original) */}
       {data.analysis && (
-        <div className="plan-analysis">
-          <div className="analysis-content markdown-content">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {data.analysis}
-            </ReactMarkdown>
-          </div>
-        </div>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          {data.analysis}
+        </ReactMarkdown>
       )}
 
       {/* No analysis yet but steps are done */}
       {!data.analysis && !error && (
-        <div className="detail-empty-state">
-          <p>Click "Regenerate" to generate analysis.</p>
+        <div className="detail-empty-state" style={{ flex: 1 }}>
+          <p>Analysis will be generated automatically...</p>
         </div>
+      )}
+
+      {/* Regenerate button — bottom, matches original .detail-regenerate-btn */}
+      {allStepsDone && (
+        <button
+          className="detail-regenerate-btn"
+          onClick={() => requestAnalysis(true)}
+          disabled={loading}
+        >
+          <RefreshCw size={14} />
+          <span>{t('label.regenerate_analysis') !== 'label.regenerate_analysis'
+            ? t('label.regenerate_analysis')
+            : 'Regenerate Analysis'}</span>
+        </button>
       )}
     </div>
   );

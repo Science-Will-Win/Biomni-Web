@@ -109,43 +109,34 @@ If a step fails or needs modification, mark it with an X and explain why:
 
 Always show the updated plan after each step so the user can track progress.
 
-At each turn, you should first provide your thinking and reasoning given the conversation history."""
+At each turn, you should first provide your thinking and reasoning given the conversation history.
+
+IMPORTANT: DO NOT repeat the same words, phrases, or sentences. Each sentence must add new information. If you find yourself repeating, stop and move to the next point."""
 
 
 # ─── Section [B2]: Plan creation system prompt (structured output) ───
 # Forces LLM to output [TOOL_CALLS]create_plan[ARGS]{JSON} directly.
 # Ported from original prompts/PLAN_SYSTEM_PROMPT.txt
 
-SECTION_PLAN_SYSTEM = """You are a research planning assistant. Create a systematic research plan following the scientific method.
+SECTION_PLAN_SYSTEM = """You are a research planning assistant.
 
-# OUTPUT FORMAT
+# TASK
+Output a single line in this EXACT format — nothing else before or after:
 
 [TOOL_CALLS]create_plan[ARGS]{"goal": "...", "steps": [{"name": "...", "description": "..."}]}
 
-# RESEARCH METHODOLOGY
-
-Every plan MUST follow this sequential framework:
-1. Literature Review — collect and analyze existing research
-2. Problem Definition — define specific research questions and hypotheses
-3. Methodology Design — select appropriate methods, tools, and protocols
-4. Data Collection — gather experimental data or samples
-5. Data Analysis — process, analyze, and interpret results
-6. Conclusion — draw conclusions and identify implications
-
-Adapt these phases to the specific research topic. Each step must be DISTINCT with no overlap.
-Write step names and descriptions in Korean.
-
 # RULES
-
-- goal: concise noun phrase (NOT a sentence)
-- steps: array of {name, description} — no other fields
-- 3-10 steps per plan (adjust based on task complexity)
-- No final summary step (auto-generated)
-- Output ONLY the [TOOL_CALLS] line, nothing else
+- goal: concise noun phrase (not a full sentence)
+- steps: 5-10 items, each with "name" and "description"
+- Write goal and steps in the SAME LANGUAGE as the user's message
+- Follow scientific method: Literature Review → Problem Definition → Method Design → Data Collection → Analysis → Conclusion
+- Each step must be distinct, no overlap
+- DO NOT output any text before or after the [TOOL_CALLS] line
+- DO NOT repeat words or phrases
 
 # EXAMPLE
 
-[TOOL_CALLS]create_plan[ARGS]{"goal": "CRISPR 스크린 기반 T세포 고갈 조절 유전자 식별", "steps": [{"name": "문헌 조사", "description": "T세포 고갈 메커니즘과 주요 조절 인자에 관한 최신 문헌을 조사하고 핵심 경로를 정리합니다"}, {"name": "후보 유전자 선정", "description": "문헌에서 도출된 T세포 고갈 관련 후보 유전자 목록을 작성하고 우선순위를 매깁니다"}, {"name": "gRNA 라이브러리 설계", "description": "선정된 후보 유전자를 타겟하는 gRNA 서열을 설계하고 CRISPR 라이브러리를 구성합니다"}, {"name": "실험 조건 최적화", "description": "사용할 세포주 선택, 형질전환 효율 검증, 선별 조건 등 실험 파라미터를 최적화합니다"}, {"name": "스크린 실행 및 시퀀싱", "description": "최적화된 조건으로 CRISPR 스크린을 실행하고 차세대 시퀀싱(NGS)을 수행합니다"}, {"name": "결과 분석 및 검증", "description": "시퀀싱 데이터에서 유전자별 enrichment/depletion을 통계 분석하고 후보 유전자를 검증합니다"}]}"""
+[TOOL_CALLS]create_plan[ARGS]{"goal": "Hepatotoxicity assessment of drug candidates", "steps": [{"name": "Literature review", "description": "Survey in vitro and in vivo models and biomarkers used for hepatotoxicity evaluation"}, {"name": "Experimental design", "description": "Design toxicity test protocols using HepG2 cell lines and primary hepatocytes"}, {"name": "Data collection and analysis", "description": "Collect cell viability, ALT/AST levels, and metabolite profiling data, then perform statistical analysis"}]}"""
 
 
 # ─── Section [C]: Code execution rules ───
@@ -322,13 +313,14 @@ Do NOT include a final summary/report step.
 {think_fmt}
 사용자가 CRISPR 스크린 실험 계획을 요청했다. 연구 배경, 실험 설계, 유전자 목록, RNA 설계, 제어 구축, 데이터 수집, 분석 단계로 나눠야 한다.
 {think_close}
-[TOOL_CALLS]create_plan[ARGS]{{"goal": "T세포 고갈 관련 유전자 식별을 위한 CRISPR 스크린 실험 계획", "steps": [{{"name": "연구 배경 및 문제 정의", "description": "T세포 고갈 관련 문헌을 조사하고 연구 목표를 구체화합니다"}}, {{"name": "실험 설계 기본 설정", "description": "CRISPR 라이브러리 선택 및 스크리닝 전략을 수립합니다"}}, {{"name": "유전자 목록 구성", "description": "타겟 유전자 후보를 선별하고 목록을 작성합니다"}}]}}
+[TOOL_CALLS]create_plan[ARGS]{{"goal": "T세포 고갈 관련 유전자 식별을 위한 CRISPR 스크린 실험 계획", "steps": [{{"name": "연구 배경 및 문제 정의", "description": "T세포 고갈 관련 문헌을 조사하고 연구 목표를 구체화합니다"}}, {{"name": "실험 설계 기본 설정", "description": "CRISPR 라이브러리 선택 및 스크리닝 전략을 수립합니다"}}, {{"name": "유전자 목록 구성", "description": "타겟 유전자 후보를 선별하고 목록을 작성합니다"}}, {{"name": "sgRNA 설계 및 검증", "description": "선별된 유전자에 대한 sgRNA를 설계하고 효율성을 검증합니다"}}, {{"name": "데이터 분석 및 결과 해석", "description": "스크리닝 결과를 통계적으로 분석하고 유의미한 유전자를 식별합니다"}}]}}
 
 # RULES
 
 - Output ONLY the tool call (after optional {think_fmt} block)
 - MUST start with [TOOL_CALLS], not [ARGS]
-- Each step MUST have name and description in Korean"""
+- Each step MUST have name and description in Korean
+- MINIMUM 5 steps required per plan"""
 
 
 # Keep legacy constant for backward compatibility
@@ -478,6 +470,66 @@ Each library is listed with its description to help you understand its functiona
 
 
 # ═══════════════════════════════════════════
+# Compact prompt for small reasoning models
+# ═══════════════════════════════════════════
+
+def _build_compact_step_prompt(
+    token_format: Optional[Dict] = None,
+    tool_desc: str = "",
+    data_lake_path: str = "",
+) -> str:
+    """Build a minimal system prompt for small reasoning models (3B/7B).
+
+    These models get confused by long, complex prompts. This compact version
+    keeps only the essential instructions:
+    - Brief role
+    - How to call code_gen (the only tool they need)
+    - Available functions (from retrieval)
+    - Anti-repetition rule
+    """
+    tf = token_format or {}
+    think_fmt = tf.get("think_format", "")
+    think_close = _closing_tag(think_fmt) if think_fmt else ""
+
+    think_inst = ""
+    if think_fmt:
+        think_inst = f"Use {think_fmt}...{think_close} to think before responding.\n"
+
+    functions_block = ""
+    if tool_desc:
+        functions_block = f"""
+# AVAILABLE FUNCTIONS
+Import these in your code_gen task description:
+{tool_desc}
+"""
+
+    data_block = ""
+    if data_lake_path:
+        data_block = f"\nData lake path: {data_lake_path}\n"
+
+    return f"""\
+You are Aigen R0, a biomedical research assistant.
+{think_inst}
+# HOW TO RESPOND
+
+Call code_gen to execute code for analysis. Format:
+[TOOL_CALLS]code_gen[ARGS]{{"task": "detailed description of what to do", "language": "python"}}
+
+Write a SPECIFIC task description including:
+- What data to load or search for
+- What analysis to perform
+- What to print or visualize
+
+If no code is needed, respond with a clear text answer.
+{functions_block}{data_block}
+# RULES
+- DO NOT repeat words or phrases. Each sentence must add new information.
+- Be concise and focused on the current step.
+- When using biomni functions, specify the full import path (e.g., from biomni.tool.literature import query_pubmed).
+"""
+
+
+# ═══════════════════════════════════════════
 # Public API
 # ═══════════════════════════════════════════
 
@@ -486,6 +538,10 @@ def build_prompt(
     *,
     # Token format (from model_registry.yaml via resolve_model_behavior())
     token_format: Optional[Dict[str, Any]] = None,
+    # Whether the model uses code_gen tool instead of native [EXECUTE] blocks
+    use_code_gen: bool = False,
+    # Compact mode for small reasoning models (3B, 7B) — shorter prompt
+    compact: bool = False,
     # Dynamic content (from A1 instance at runtime)
     tool_desc: str = "",
     data_lake_path: str = "",
@@ -522,12 +578,20 @@ def build_prompt(
         Complete system prompt string.
     """
     if mode == PromptMode.FULL:
+        # Compact mode for small reasoning models — minimal prompt
+        if compact and use_code_gen:
+            return _build_compact_step_prompt(token_format, tool_desc, data_lake_path)
+
         # Full prompt = A + B + C + D + E(optional) + F + G  (step execution)
+        # For use_code_gen models: replace Section [C] with code_gen guide
         parts = [
             _build_role_section(token_format),
             SECTION_PLAN,
-            _build_code_exec_section(token_format),
         ]
+        if use_code_gen:
+            parts.append(SECTION_CODE_GEN_GUIDE)
+        else:
+            parts.append(_build_code_exec_section(token_format))
         parts.append(SECTION_PROTOCOL)
         if self_critic:
             parts.append(SECTION_SELF_CRITIC)
@@ -567,3 +631,49 @@ def build_prompt(
 
     else:
         raise ValueError(f"Unknown prompt mode: {mode}")
+
+
+def get_prompt_sections(
+    mode: PromptMode,
+    token_format: Optional[Dict[str, Any]] = None,
+    use_code_gen: bool = False,
+) -> List[Dict[str, str]]:
+    """Return labeled sections for a given mode (for the System Prompt Viewer).
+
+    Each section is a dict with 'label' and 'content' keys.
+    Dynamic sections (F, G) are shown as placeholders since they depend on runtime state.
+    """
+    sections: List[Dict[str, str]] = []
+
+    if mode == PromptMode.FULL:
+        sections.append({"label": "[A] Role", "content": _build_role_section(token_format)})
+        sections.append({"label": "[B] Plan Rules", "content": SECTION_PLAN})
+        if use_code_gen:
+            sections.append({"label": "[C] Code Gen Guide", "content": SECTION_CODE_GEN_GUIDE})
+        else:
+            sections.append({"label": "[C] Code Execution", "content": _build_code_exec_section(token_format)})
+        sections.append({"label": "[D] Protocol Generation", "content": SECTION_PROTOCOL})
+        sections.append({"label": "[E] Self-Critic", "content": SECTION_SELF_CRITIC})
+        sections.append({"label": "[F] Custom Resources", "content": "(Dynamic — populated at runtime with custom tools, data, software, and know-how documents)"})
+        sections.append({"label": "[G] Environment Resources", "content": "(Dynamic — populated at runtime with function dictionary, data lake, and software library)"})
+
+    elif mode == PromptMode.AGENT:
+        tf = token_format or {}
+        model_prompt = tf.get("system_prompt")
+        if model_prompt and model_prompt.strip():
+            sections.append({"label": "Model System Prompt", "content": model_prompt.strip()})
+        else:
+            sections.append({"label": "[A] Role", "content": _build_role_section(token_format)})
+
+    elif mode == PromptMode.PLAN:
+        sections.append({"label": "Plan Creation (Structured Output)", "content": SECTION_PLAN_SYSTEM})
+
+    elif mode == PromptMode.CODE_GEN:
+        sections.append({"label": "[A] Role", "content": _build_role_section(token_format)})
+        sections.append({"label": "Code Gen Environment", "content": SECTION_CODE_GEN_ENV})
+        sections.append({"label": "[G] Environment Resources", "content": "(Dynamic — data lake, function dictionary)"})
+
+    elif mode == PromptMode.ANALYZE:
+        sections.append({"label": "Analyze (Korean)", "content": SECTION_ANALYZE})
+
+    return sections

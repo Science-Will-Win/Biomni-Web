@@ -42,10 +42,10 @@ export function DetailPanel() {
       </div>
 
       <div className="detail-content">
-        {activeTab === 'plan' && <PlanTab />}
-        {activeTab === 'graph' && <GraphTab />}
-        {activeTab === 'code' && <CodeTab />}
-        {activeTab === 'outputs' && <OutputsTab />}
+        <div style={{ display: activeTab === 'plan' ? 'flex' : 'none', flexDirection: 'column' as const, height: '100%', overflow: 'hidden' }}><PlanTab /></div>
+        <div style={{ display: activeTab === 'graph' ? 'flex' : 'none', flexDirection: 'column' as const, height: '100%', overflow: 'hidden' }}><GraphTab /></div>
+        <div style={{ display: activeTab === 'code' ? 'flex' : 'none', flexDirection: 'column' as const, height: '100%', overflow: 'hidden' }}><CodeTab /></div>
+        <div style={{ display: activeTab === 'outputs' ? 'flex' : 'none', flexDirection: 'column' as const, height: '100%', overflow: 'hidden' }}><OutputsTab /></div>
       </div>
     </div>
   );

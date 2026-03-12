@@ -37,14 +37,44 @@ export function useConversations() {
 
       try {
         const detail = await api.getConversation(convId);
-        const messages: ChatMessage[] = detail.messages.map((m: MessageData) => ({
-          role: m.role as 'user' | 'assistant',
-          content: m.content,
-        }));
+        const messages: ChatMessage[] = detail.messages.map((m: MessageData) => {
+          const msg: ChatMessage = {
+            role: m.role as 'user' | 'assistant',
+            content: m.content,
+          };
+
+          // Parse [TOOL_CALLS] synthetic messages → populate toolCalls
+          if (m.content.includes('[TOOL_CALLS]create_plan[ARGS]')) {
+            try {
+              const argsStr = m.content.substring(
+                m.content.indexOf('[ARGS]') + '[ARGS]'.length,
+              );
+              const args = JSON.parse(argsStr);
+              msg.toolCalls = [{ name: 'create_plan', arguments: args }];
+              msg.content = '';
+            } catch { /* ignore malformed */ }
+          }
+
+          // Hide raw [PLAN_COMPLETE] marker text and reconstruct plan box widget
+          if (m.content.includes('[PLAN_COMPLETE]')) {
+            try {
+              const planJson = m.content.substring(
+                m.content.indexOf('[PLAN_COMPLETE]') + '[PLAN_COMPLETE]'.length,
+              );
+              const planData = JSON.parse(planJson.trim());
+              if (planData.goal && planData.steps) {
+                msg.toolCalls = [{ name: 'create_plan', arguments: { goal: planData.goal, steps: planData.steps } }];
+              }
+            } catch { /* ignore malformed */ }
+            msg.content = '';
+          }
+
+          return msg;
+        });
 
         chatDispatch({ type: 'SET_CONVERSATION', payload: { id: convId, messages } });
 
-        // Restore detail panel from [PLAN_COMPLETE] marker in messages
+        // Restore detail panel from plan markers in messages
         restoreDetailPanel(detail.messages);
       } catch (err) {
         chatDispatch({ type: 'SET_ERROR', payload: String(err) });
@@ -54,7 +84,14 @@ export function useConversations() {
   );
 
   const createNew = useCallback(async () => {
-    chatDispatch({ type: 'SET_CONVERSATION', payload: { id: null, messages: [] } });
+    try {
+      const newConv = await api.createConversation();  // POST /api/new — creates blank conversation
+      chatDispatch({ type: 'SET_CONVERSATION', payload: { id: newConv.id, messages: [] } });
+    } catch {
+      chatDispatch({ type: 'SET_CONVERSATION', payload: { id: null, messages: [] } });
+    }
+    chatDispatch({ type: 'SET_STREAMING', payload: false });
+    chatDispatch({ type: 'CLEAR_STEP_QUESTIONS' });
     appDispatch({ type: 'CLEAR_DETAIL_PANEL' });
     await loadConversations();
   }, [chatDispatch, appDispatch, loadConversations]);
@@ -98,8 +135,13 @@ export function useConversations() {
     [loadConversations],
   );
 
-  /** Restore detail panel from [PLAN_COMPLETE] marker in conversation messages */
+  /** Restore detail panel from plan markers in conversation messages.
+   *  1st pass: [PLAN_COMPLETE] (finished/stopped plan with results)
+   *  2nd pass: [TOOL_CALLS]create_plan (in-progress plan, structure only)
+   */
   function restoreDetailPanel(messages: MessageData[]) {
+    console.log('[restoreDetailPanel] Scanning', messages.length, 'messages');
+    // 1st: [PLAN_COMPLETE] — completed or stopped plan
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
       if (msg.role === 'assistant' && msg.content.includes('[PLAN_COMPLETE]')) {
@@ -108,15 +150,30 @@ export function useConversations() {
             msg.content.indexOf('[PLAN_COMPLETE]') + '[PLAN_COMPLETE]'.length,
           );
           const planData = JSON.parse(marker.trim());
-          if (planData.goal && planData.steps) {
+          console.log('[restoreDetailPanel] Found [PLAN_COMPLETE]:', { goal: planData.goal, stepsCount: planData.steps?.length, resultsCount: planData.results?.length });
+        if (planData.goal && planData.steps) {
+            const isStopped = !!planData.stopped;
+            const completedSteps = new Set(
+              (planData.results || []).filter((r: { success: boolean; step: number }) => r.success).map((r: { step: number }) => r.step),
+            );
+            const errorSteps = new Set(
+              (planData.results || []).filter((r: { success: boolean; step: number }) => !r.success).map((r: { step: number }) => r.step),
+            );
+
             appDispatch({
               type: 'SET_DETAIL_PANEL_DATA',
               payload: {
                 goal: planData.goal,
-                steps: planData.steps.map((s: { name: string; description: string }) => ({
+                steps: planData.steps.map((s: { name: string; description: string }, i: number) => ({
                   name: s.name,
-                  description: s.description,
-                  status: 'completed' as const,
+                  description: s.description || '',
+                  status: completedSteps.has(i + 1)
+                    ? 'completed' as const
+                    : errorSteps.has(i + 1)
+                      ? 'error' as const
+                      : isStopped
+                        ? 'stopped' as const
+                        : 'completed' as const,
                 })),
                 results: planData.results || [],
                 codes: planData.codes || {},
@@ -126,12 +183,44 @@ export function useConversations() {
             });
             return;
           }
-        } catch {
-          // Malformed plan data — skip
-        }
+        } catch { /* skip malformed */ }
       }
     }
+
+    // 2nd: [TOOL_CALLS]create_plan — in-progress plan (no results)
+    console.log('[restoreDetailPanel] No [PLAN_COMPLETE] found, trying [TOOL_CALLS]create_plan...');
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role === 'assistant' && msg.content.includes('[TOOL_CALLS]create_plan[ARGS]')) {
+        try {
+          const argsStr = msg.content.substring(
+            msg.content.indexOf('[ARGS]') + '[ARGS]'.length,
+          );
+          const args = JSON.parse(argsStr);
+          if (args.goal && args.steps) {
+            appDispatch({
+              type: 'SET_DETAIL_PANEL_DATA',
+              payload: {
+                goal: args.goal,
+                steps: args.steps.map((s: { name: string; description: string }) => ({
+                  name: s.name,
+                  description: s.description || '',
+                  status: 'pending' as const,
+                })),
+                results: [],
+                codes: {},
+                analysis: '',
+                currentStep: 0,
+              },
+            });
+            return;
+          }
+        } catch { /* skip malformed */ }
+      }
+    }
+
     // No plan found — clear detail panel
+    console.log('[restoreDetailPanel] No plan markers found in any message. Messages summary:', messages.map(m => ({ role: m.role, len: m.content.length, preview: m.content.substring(0, 80) })));
     appDispatch({ type: 'CLEAR_DETAIL_PANEL' });
   }
 

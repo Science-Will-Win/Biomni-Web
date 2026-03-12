@@ -23,6 +23,7 @@ interface DraftGeneral {
   refusalTempDecay: number;
   refusalMinTemp: number;
   refusalRecoveryTokens: number;
+  useCompactPrompt: boolean;
 }
 
 interface DraftApiKeys {
@@ -51,6 +52,7 @@ export function SettingsModal() {
     refusalTempDecay: settings.refusalTempDecay,
     refusalMinTemp: settings.refusalMinTemp,
     refusalRecoveryTokens: settings.refusalRecoveryTokens,
+    useCompactPrompt: settings.useCompactPrompt,
   });
 
   // Draft state for API Keys tab
@@ -79,6 +81,7 @@ export function SettingsModal() {
       refusal_temp_decay: draft.refusalTempDecay,
       refusal_min_temp: draft.refusalMinTemp,
       refusal_recovery_tokens: draft.refusalRecoveryTokens,
+      use_compact_prompt: draft.useCompactPrompt,
     }).catch(() => {});
 
     // 2. API keys (only non-empty)
@@ -111,6 +114,7 @@ export function SettingsModal() {
       refusalTempDecay: draft.refusalTempDecay,
       refusalMinTemp: draft.refusalMinTemp,
       refusalRecoveryTokens: draft.refusalRecoveryTokens,
+      useCompactPrompt: draft.useCompactPrompt,
     });
 
     // 6. Close
@@ -194,7 +198,7 @@ function GeneralTab({
   t: (k: string) => string;
 }) {
   const update = useCallback(
-    (field: keyof DraftGeneral, value: string | number) => {
+    (field: keyof DraftGeneral, value: string | number | boolean) => {
       setDraft((prev) => ({ ...prev, [field]: value }));
     },
     [setDraft],
@@ -294,11 +298,23 @@ function GeneralTab({
           value={draft.maxContext}
           onChange={(e) => update('maxContext', parseInt(e.target.value) || 1024)}
         />
-        {draft.maxContext > 262144 && (
-          <span style={{ color: '#ff4444', fontSize: '12px' }}>
-            Max 256K exceeded. Capped to 262144.
+      </div>
+
+      <div className="setting-item">
+        <label className="setting-label">
+          Compact Prompt Mode
+          <span className="setting-description" style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+            Uses a minimal code-gen prompt for small models. May cause formatting errors.
           </span>
-        )}
+        </label>
+        <label className="toggle-switch">
+          <input
+            type="checkbox"
+            checked={draft.useCompactPrompt}
+            onChange={(e) => update('useCompactPrompt', e.target.checked ? true : false)}
+          />
+          <span className="slider round"></span>
+        </label>
       </div>
 
       <div className="setting-section-divider" />

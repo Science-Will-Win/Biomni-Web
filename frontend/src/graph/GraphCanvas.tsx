@@ -16,6 +16,7 @@ type GraphEngine = ReturnType<typeof useGraphEngine>;
 
 interface GraphCanvasProps {
   engine: GraphEngine;
+  visible?: boolean;
 }
 
 interface PendingConn {
@@ -68,7 +69,7 @@ function GraphNode({
   );
 }
 
-export function GraphCanvas({ engine }: GraphCanvasProps) {
+export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { state, setNodeTitle, setPortValue, setViewport, selectNode, toggleSelectNode, setSelectedNodes, selectConnection, addNode, updateNode, addConnection, removeConnection, removeNode, removeNodes, pushUndo, undo, redo, relayoutVertical } = engine;
 
@@ -114,8 +115,6 @@ export function GraphCanvas({ engine }: GraphCanvasProps) {
 
   const nodesArray = Array.from(state.nodes.values());
   const connectionsArray = Array.from(state.connections.values());
-  const svgMinX = -5000, svgMinY = -5000, svgWidth = 10000, svgHeight = 10000;
-
   // fitToView on initial render
   const hasFitted = useRef(false);
   useEffect(() => {
@@ -128,13 +127,27 @@ export function GraphCanvas({ engine }: GraphCanvasProps) {
 
   // Measure actual node heights from DOM and relayout for edge-to-edge equal spacing
   const measuredRef = useRef(false);
+  const measureRetryRef = useRef(0);
   useEffect(() => {
-    if (nodesArray.length === 0) { measuredRef.current = false; setLayoutReady(false); return; }
+    if (nodesArray.length === 0) { measuredRef.current = false; measureRetryRef.current = 0; setLayoutReady(false); return; }
     if (measuredRef.current) return;
-    // Delay to allow DOM to render
+    // Delay to allow DOM to render (retry up to 5 times if container not ready)
+    const delay = measureRetryRef.current > 0 ? 100 : 50;
     const timer = setTimeout(() => {
       const container = containerRef.current;
-      if (!container) return;
+      if (!container) {
+        // Container not ready — retry
+        if (measureRetryRef.current < 5) {
+          measureRetryRef.current++;
+          setLayoutReady(prev => prev); // Force re-run via state toggle
+          setRenderTick(t => t + 1);
+        } else {
+          // Give up after 5 retries — show graph anyway
+          measuredRef.current = true;
+          setLayoutReady(true);
+        }
+        return;
+      }
       let needsRelayout = false;
       for (const node of state.nodes.values()) {
         const el = container.querySelector(`[data-node-id="${node.id}"]`) as HTMLElement;
@@ -147,6 +160,7 @@ export function GraphCanvas({ engine }: GraphCanvasProps) {
         }
       }
       measuredRef.current = true;
+      measureRetryRef.current = 0;
       if (needsRelayout) {
         requestAnimationFrame(() => {
           relayoutVertical(50);
@@ -156,11 +170,31 @@ export function GraphCanvas({ engine }: GraphCanvasProps) {
           });
         });
       } else {
-        setLayoutReady(true);
+        requestAnimationFrame(() => {
+          if (containerRef.current) fitToView(engine, containerRef.current);
+          setLayoutReady(true);
+        });
+      }
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [nodesArray.length, state.nodes, updateNode, relayoutVertical, engine, renderTick]);
+
+  // Re-measure and fitToView when tab becomes visible (display:none → visible)
+  const prevVisibleRef = useRef(visible);
+  useEffect(() => {
+    const wasHidden = !prevVisibleRef.current;
+    prevVisibleRef.current = visible;
+    if (!visible || !wasHidden) return;
+    if (nodesArray.length === 0) return;
+    const timer = setTimeout(() => {
+      if (containerRef.current) {
+        measuredRef.current = false;
+        setLayoutReady(false);
+        setRenderTick(t => t + 1);  // Re-trigger measurement effect
       }
     }, 50);
     return () => clearTimeout(timer);
-  }, [nodesArray.length, state.nodes, updateNode, relayoutVertical, engine]);
+  }, [visible, nodesArray.length]);
 
   // Wheel zoom
   useEffect(() => {
@@ -405,9 +439,10 @@ export function GraphCanvas({ engine }: GraphCanvasProps) {
       dragRef.current = null;
     };
 
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => { document.removeEventListener('mousemove', handleMouseMove); document.removeEventListener('mouseup', handleMouseUp); };
+    const doc = containerRef.current?.ownerDocument ?? document;
+    doc.addEventListener('mousemove', handleMouseMove);
+    doc.addEventListener('mouseup', handleMouseUp);
+    return () => { doc.removeEventListener('mousemove', handleMouseMove); doc.removeEventListener('mouseup', handleMouseUp); };
   }, [engine, clearPortHighlights]);
 
   // Port mousedown → start pending connection
@@ -531,8 +566,9 @@ export function GraphCanvas({ engine }: GraphCanvasProps) {
       const sn = state.nodes.get(sid);
       if (sn) groupOffsets.set(sid, { dx: sn.x - node.x, dy: sn.y - node.y });
     }
+    pushUndo();
     dragRef.current = { type: 'node', nodeId, startX: e.clientX, startY: e.clientY, startPanX: state.panX, startPanY: state.panY, startNodeX: node.x, startNodeY: node.y, groupOffsets };
-  }, [state.nodes, state.panX, state.panY, state.selectedNodeIds, selectNode, toggleSelectNode]);
+  }, [state.nodes, state.panX, state.panY, state.selectedNodeIds, selectNode, toggleSelectNode, pushUndo]);
 
   // Left-click on connection → select it
   const handleConnectionClick = useCallback((connId: string) => { selectConnection(connId); }, [selectConnection]);
@@ -654,8 +690,9 @@ export function GraphCanvas({ engine }: GraphCanvasProps) {
         };
       }
     };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    const doc = containerRef.current?.ownerDocument ?? document;
+    doc.addEventListener('keydown', handleKeyDown);
+    return () => doc.removeEventListener('keydown', handleKeyDown);
   }, [state.selectedConnectionId, state.selectedNodeId, state.selectedNodeIds, state.nodes, state.connections, removeConnection, removeNode, removeNodes, selectConnection, selectNode, engine, pushUndo, undo, redo]);
   const handleTitleChange = useCallback((id: string, title: string) => { setNodeTitle(id, title); }, [setNodeTitle]);
   const handlePortValueChange = useCallback((nId: string, pName: string, val: unknown) => { setPortValue(nId, pName, val); }, [setPortValue]);
@@ -674,15 +711,6 @@ export function GraphCanvas({ engine }: GraphCanvasProps) {
     };
   }, [state.nodes, pushUndo]);
 
-  // Auto layout handler
-  const handleAutoLayout = useCallback(() => {
-    pushUndo();
-    relayoutVertical(50);
-    requestAnimationFrame(() => {
-      if (containerRef.current) fitToView(engine, containerRef.current);
-    });
-  }, [pushUndo, relayoutVertical, engine]);
-
   const graphCtx = useMemo(() => ({ onPortMouseDown: handlePortMouseDown }), [handlePortMouseDown]);
 
   return (
@@ -692,15 +720,16 @@ export function GraphCanvas({ engine }: GraphCanvasProps) {
           backgroundSize: `${20 * state.scale}px ${20 * state.scale}px`,
           backgroundPosition: `${state.panX}px ${state.panY}px`,
         }}>
+        {/* SVG: container 직속 자식 → 100% = 실제 크기, own transform */}
+        <svg className="node-graph-svg" style={{ transform: `translate(${state.panX}px, ${state.panY}px) scale(${state.scale})`, transformOrigin: '0 0', opacity: layoutReady ? 1 : 0, transition: 'opacity 0.15s ease-in' }}>
+          {connectionsArray.map(conn => (
+            <ConnectionLine key={conn.id} connection={conn} nodes={state.nodes} containerEl={containerRef.current}
+              selected={conn.id === state.selectedConnectionId} onClick={handleConnectionClick} />
+          ))}
+          {pendingLine && <PendingConnectionLine x1={pendingLine.x1} y1={pendingLine.y1} x2={pendingLine.x2} y2={pendingLine.y2} isRef={pendingLine.isRef} />}
+        </svg>
+        {/* Viewport: 노드만 포함 */}
         <div className="node-graph-viewport" style={{ transform: `translate(${state.panX}px, ${state.panY}px) scale(${state.scale})`, transformOrigin: '0 0', opacity: layoutReady ? 1 : 0, transition: 'opacity 0.15s ease-in' }}>
-          <svg className="node-graph-svg" viewBox={`${svgMinX} ${svgMinY} ${svgWidth} ${svgHeight}`}
-            style={{ position: 'absolute', left: svgMinX, top: svgMinY, width: svgWidth, height: svgHeight, pointerEvents: 'none', overflow: 'visible' }}>
-            {connectionsArray.map(conn => (
-              <ConnectionLine key={conn.id} connection={conn} nodes={state.nodes} containerEl={containerRef.current}
-                selected={conn.id === state.selectedConnectionId} onClick={handleConnectionClick} />
-            ))}
-            {pendingLine && <PendingConnectionLine x1={pendingLine.x1} y1={pendingLine.y1} x2={pendingLine.x2} y2={pendingLine.y2} isRef={pendingLine.isRef} />}
-          </svg>
           <div className="node-graph-canvas">
             {nodesArray.map(node => (
               <GraphNode key={node.id} node={node}
@@ -721,8 +750,8 @@ export function GraphCanvas({ engine }: GraphCanvasProps) {
         <div className="ng-zoom-controls">
           <button className="ng-zoom-btn" onClick={() => setViewport(state.panX, state.panY, Math.min(3, state.scale * 1.2))} title="Zoom In">+</button>
           <button className="ng-zoom-btn" onClick={() => setViewport(state.panX, state.panY, Math.max(0.2, state.scale / 1.2))} title="Zoom Out">−</button>
-          <button className="ng-zoom-btn" onClick={() => containerRef.current && fitToView(engine, containerRef.current)} title="Fit to View">⊞</button>
-          <button className="ng-zoom-btn" onClick={handleAutoLayout} title="Auto Layout">⇅</button>
+          <button className="ng-zoom-btn" onClick={() => containerRef.current && fitToView(engine, containerRef.current)} title="Reset Zoom">⌂</button>
+          <button className="ng-help-btn" onClick={() => window.open('https://github.com/your-repo/biomni-web', '_blank')} title="Help">?</button>
         </div>
         {createMenu && (
           <CreateNodeMenu

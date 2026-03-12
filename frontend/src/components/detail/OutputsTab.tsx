@@ -3,6 +3,7 @@ import { useAppContext } from '@/context/AppContext';
 import { useChatContext } from '@/context/ChatContext';
 import { listStepOutputs, getStepOutputUrl } from '@/api/files';
 import { useTranslation } from '@/i18n';
+import { MarkdownContent } from '@/utils/MarkdownContent';
 import type { PlanStepResult } from '@/types';
 
 /**
@@ -185,14 +186,14 @@ function ToolResultDetail({ result }: { result: unknown }) {
     );
   }
 
-  // Summary
+  // Summary (Markdown rendered)
   if (r.summary && typeof r.summary === 'string') {
-    parts.push(<div key="summary" className="output-summary">{r.summary}</div>);
+    parts.push(<div key="summary" className="output-summary"><MarkdownContent text={r.summary as string} /></div>);
   }
 
-  // Text (fallback text result)
+  // Text (Markdown rendered)
   if (r.text && typeof r.text === 'string') {
-    parts.push(<div key="text" className="output-text">{r.text}</div>);
+    parts.push(<div key="text" className="output-text"><MarkdownContent text={r.text as string} /></div>);
   }
 
   // Meta info (duration, tokens)
@@ -203,8 +204,11 @@ function ToolResultDetail({ result }: { result: unknown }) {
     parts.push(<div key="meta" className="output-meta">{meta.join(' | ')}</div>);
   }
 
-  // Fallback: JSON display if nothing rendered
+  // Fallback: unwrap nested result objects (e.g., {success, result: {actual data}})
   if (parts.length === 0) {
+    if (r.result && typeof r.result === 'object') {
+      return <ToolResultDetail result={r.result} />;
+    }
     return <pre className="result-json">{JSON.stringify(result, null, 2)}</pre>;
   }
 
