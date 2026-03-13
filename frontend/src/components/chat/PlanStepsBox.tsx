@@ -98,6 +98,15 @@ export function PlanStepsBox({ toolCalls, toolResults, messageIndex }: Props) {
   };
 
   const handleMoreDetail = () => {
+    // 1. 현재 메시지의 전체 텍스트 내용 가져오기 (<think> 토큰 포함)
+    const currentMessage = chatState.messages[messageIndex];
+    const rawContent = currentMessage?.content || '';
+
+    // 2. <think> 태그를 마크다운 형태로 예쁘게 변환 (PlanTab의 ReactMarkdown이 인식하도록)
+    const formattedAnalysis = rawContent
+      .replace(/<think>/g, '### 🤔 Thought Process\n\n')
+      .replace(/<\/think>/g, '\n\n---\n\n### 📋 Generated Plan\n\n');
+
     const planData: DetailPanelData = {
       goal: args.goal || 'Plan',
       steps: steps.map(s => ({
@@ -113,16 +122,20 @@ export function PlanStepsBox({ toolCalls, toolResults, messageIndex }: Props) {
         result: tr.result,
       })) || [],
       codes: {},
-      analysis: '',
+      // 3. 원래는 '' (빈 문자열)이었으나, 변환된 사고 과정+플랜 내용을 주입
+      analysis: formattedAnalysis,
       currentStep: steps.length,
     };
+    
     toolResults?.forEach(tr => {
       if ((tr as Record<string, unknown>).code && tr.step != null) {
         planData.codes[tr.step - 1] = String((tr as Record<string, unknown>).code);
       }
     });
+    
     appDispatch({ type: 'SET_DETAIL_PANEL_DATA', payload: planData });
-    appDispatch({ type: 'SET_ACTIVE_DETAIL_TAB', payload: 'outputs' });
+    // 4. 클릭 시 'outputs'가 아닌 'plan' 탭으로 즉시 포커스 이동
+    appDispatch({ type: 'SET_ACTIVE_DETAIL_TAB', payload: 'plan' });
   };
 
   // Check if this plan box is currently active
@@ -353,7 +366,7 @@ function SingleResultView({ result }: { result: PlanStepResult }) {
           {fixAttempts != null && fixAttempts > 0 && (
             <div className="code-fix-info">Auto-corrected ({fixAttempts} attempt{fixAttempts > 1 ? 's' : ''})</div>
           )}
-          {obj.execution && <ExecutionResultView execution={obj.execution as Record<string, unknown>} />}
+          {obj.execution ? <ExecutionResultView execution={obj.execution as Record<string, unknown>} /> : null}
         </div>
       );
     }
@@ -371,7 +384,7 @@ function SingleResultView({ result }: { result: PlanStepResult }) {
 
       return (
         <div className="step-section-minimal">
-          {obj.title && <span className="section-label-minimal">{String(obj.title)}</span>}
+          {obj.title ? <span className="section-label-minimal">{String(obj.title)}</span> : null}
           {abbreviated && <div className="step-brief-summary">{abbreviated}</div>}
           {metaText && <div className="result-meta-minimal">{metaText}</div>}
         </div>

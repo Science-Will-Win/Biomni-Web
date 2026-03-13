@@ -20,7 +20,6 @@ export function PlanTab() {
   const [error, setError] = useState('');
   const requestedRef = useRef(false);
 
-  // Detect plan completion: all steps have a terminal status
   const allStepsDone = data
     ? data.steps.length > 0 &&
       data.steps.every(
@@ -28,9 +27,27 @@ export function PlanTab() {
       )
     : false;
 
+  let planMsg = chatState.messages.find(m =>
+    m.toolCalls?.some(tc => tc.name === 'create_plan' && (tc.arguments as Record<string, unknown>)?.goal === data?.goal)
+  );
+
+  if (!planMsg && !allStepsDone) {
+    const assistantMsgs = chatState.messages.filter(m => m.role === 'assistant');
+    planMsg = assistantMsgs[assistantMsgs.length - 1];
+  }
+
+  const rawContent = planMsg?.content || '';
+  const hasThink = rawContent.includes('<think>') || rawContent.includes('[THINK]');
+
+  const formattedThink = rawContent
+    .replace(/<think>|\[THINK\]/gi, '### 🤔 Thought Process\n\n')
+    .replace(/<\/think>|\[\/THINK\]/gi, '\n\n---\n\n### 📋 Generated Plan\n\n');
+
+  const displayContent = data?.analysis || (hasThink ? formattedThink : '');
+
   const requestAnalysis = useCallback(
     async (force = false) => {
-      if (!data || (!force && data.analysis)) return;
+      if (!data || (!force && displayContent)) return;
       if (!allStepsDone && !force) return;
 
       setLoading(true);
@@ -61,20 +78,18 @@ export function PlanTab() {
         setLoading(false);
       }
     },
-    [data, allStepsDone, appDispatch],
+    [data, allStepsDone, appDispatch, displayContent],
   );
 
-  // Auto-request analysis when plan completes (once)
   useEffect(() => {
-    if (allStepsDone && data && !data.analysis && !requestedRef.current) {
+    if (allStepsDone && data && !displayContent && !requestedRef.current) {
       requestedRef.current = true;
       requestAnalysis();
     }
-    // Reset flag when plan data changes (new plan)
     if (!allStepsDone) {
       requestedRef.current = false;
     }
-  }, [allStepsDone, data, requestAnalysis]);
+  }, [allStepsDone, data, requestAnalysis, displayContent]);
 
   const handleReplan = async () => {
     if (isStreaming) return;
@@ -101,8 +116,8 @@ export function PlanTab() {
     }
   };
 
-  // No plan data yet
-  if (!data) {
+  // 🚨 문제의 원인이었던 부분 해결! (!data && !displayContent)일 때만 빈 화면 리턴
+  if (!data && !displayContent) {
     return (
       <div className="detail-empty-state">
         <p>{t('empty.plan_hint')}</p>
@@ -110,8 +125,7 @@ export function PlanTab() {
     );
   }
 
-  // Plan in progress — not yet complete
-  if (!allStepsDone && !data.analysis) {
+  if (!allStepsDone && !displayContent) {
     return (
       <div className="detail-empty-state">
         <p>{t('status.plan_running') !== 'status.plan_running'
@@ -121,7 +135,6 @@ export function PlanTab() {
     );
   }
 
-  // Loading analysis
   if (loading) {
     return (
       <div className="detail-empty-state">
@@ -135,7 +148,6 @@ export function PlanTab() {
 
   return (
     <div className="plan-content">
-      {/* Top action bar: Replan + Regenerate */}
       <div className="plan-goal-actions" style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', padding: '8px 12px 0' }}>
         <button
           className="plan-regen-btn"
@@ -157,7 +169,6 @@ export function PlanTab() {
         </button>
       </div>
 
-      {/* Error */}
       {error && (
         <div className="detail-error-banner">
           <AlertCircle size={16} className="error-icon" />
@@ -165,19 +176,18 @@ export function PlanTab() {
         </div>
       )}
 
-      {/* Analysis markdown */}
-      {data.analysis && (
+      {/* ✅ 생각(Think) 또는 분석이 있으면 무조건 렌더링 */}
+      {displayContent && (
         <div className="plan-analysis">
           <div className="analysis-content markdown-content">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {data.analysis}
+              {displayContent}
             </ReactMarkdown>
           </div>
         </div>
       )}
 
-      {/* No analysis yet but steps are done */}
-      {!data.analysis && !error && (
+      {!displayContent && !error && (
         <div className="detail-empty-state">
           <p>Click "Regenerate" to generate analysis.</p>
         </div>
