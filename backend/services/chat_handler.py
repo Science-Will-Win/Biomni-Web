@@ -142,14 +142,52 @@ class ChatHandler:
                                 yield _ev("token", {"token": formatted_obs})  # 프론트엔드가 태그를 파싱하도록 던져줌
                                 
                     elif node_name == "plan":
-                        # Plan 노드가 계획을 다 짜고 'auto_proceed_msg'를 주입한 것을 감지
+                        # Plan 노드가 실행을 마친 상태
                         output = event["data"].get("output", {})
                         if output and "messages" in output:
-                            last_msg = output["messages"][-1].content
-                            if "Plan established" in last_msg:
-                                sys_msg = f"\n\n*(System: {last_msg})*\n\n"
-                                full_response += sys_msg
-                                yield _ev("token", {"token": sys_msg})
+                            # State에서 LLM이 실제로 내뱉은 가장 최근 메시지(Plan 내용)를 찾습니다.
+                            # 'auto_proceed_msg'가 주입되었을 수도 있으므로, 바로 앞의 AIMessage를 찾아야 합니다.
+                            plan_msg_content = ""
+                            for msg in reversed(output["messages"]):
+                                if hasattr(msg, "type") and msg.type == "ai":
+                                    plan_msg_content = msg.content
+                                    break
+                                elif hasattr(msg, "role") and msg.role == "assistant":
+                                    plan_msg_content = msg.content
+                                    break
+                            
+                            if plan_msg_content:
+                                import re
+                                
+                                # 1. <solution> 태그 안의 텍스트 추출 시도
+                                solution_match = re.search(r"<solution>(.*?)</solution>", plan_msg_content, re.DOTALL | re.IGNORECASE)
+                                target_text = solution_match.group(1) if solution_match else plan_msg_content
+
+                                # 2. 정규식을 사용하여 마크다운 체크리스트 파싱
+                                # 예: "1. [ ] Download data", "- [x] Process data" 등
+                                steps = []
+                                pattern = r"^(?:\d+\.|-|\*)\s*\[[ \w]\]\s*(.*)$"
+                                
+                                for line in target_text.split('\n'):
+                                    match = re.match(pattern, line.strip())
+                                    if match:
+                                        step_name = match.group(1).strip()
+                                        steps.append({"name": step_name, "description": step_name, "status": "pending"})
+
+                                # 만약 체크리스트 포맷이 아니더라도, 줄바꿈 기준으로 적당히 파싱
+                                if not steps:
+                                    for line in target_text.split('\n'):
+                                        clean_line = line.strip()
+                                        if clean_line and len(clean_line) > 3 and clean_line[0].isdigit():
+                                            steps.append({"name": clean_line, "description": clean_line, "status": "pending"})
+
+                                # 3. 프론트엔드로 구조화된 plan_complete 이벤트 전송
+                                if steps:
+                                    plan_data = {
+                                        "goal": "Execution Plan",
+                                        "steps": steps
+                                    }
+                                    yield _ev("plan_complete", {"plan_complete": plan_data})
 
             # 5. 최종 응답 DB 저장
             if full_response.strip():

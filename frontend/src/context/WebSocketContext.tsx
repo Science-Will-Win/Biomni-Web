@@ -139,6 +139,21 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
           break;
         }
 
+        case 'plan_complete': {
+          console.log('[WS] plan_complete:', eventData);
+          const planComplete = (eventData.plan_complete as Record<string, unknown>) ?? eventData;
+          if (planComplete) {
+            chatDispatch({ type: 'SET_PLAN_COMPLETE', payload: planComplete as unknown as PlanComplete });
+            
+            // Populate analysis in detail panel if provided
+            const analysis = planComplete.analysis as string | undefined;
+            if (analysis) {
+              appDispatch({ type: 'SET_ANALYSIS', payload: analysis });
+            }
+          }
+          break;
+        }
+
         case 'done': {
           console.log('[WS] done:', eventData);
           chatDispatch({ type: 'SET_STREAMING', payload: false });

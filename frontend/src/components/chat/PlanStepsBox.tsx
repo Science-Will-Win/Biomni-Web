@@ -4,11 +4,12 @@ import { useChatContext } from '@/context/ChatContext';
 import { useWebSocket } from '@/context/WebSocketContext';
 import { useTranslation } from '@/i18n';
 import { truncateConversation } from '@/api/conversations';
-import type { ToolCallEvent, ToolResultEvent, DetailPanelData, PlanStepResult } from '@/types';
+import type { ToolCallEvent, ToolResultEvent, DetailPanelData, PlanStepResult, PlanComplete } from '@/types';
 
 interface Props {
   toolCalls: ToolCallEvent['tool_call'][];
   toolResults?: ToolResultEvent['tool_result'][];
+  planComplete?: PlanComplete;
   messageIndex: number;
 }
 
@@ -43,52 +44,81 @@ function getToolLabel(tool?: string): string {
  * - Active plan highlighted with .plan-box-active CSS class
  * - Running indicator: number + CSS pulse animation (not ⟳ character)
  */
-export function PlanStepsBox({ toolCalls, toolResults, messageIndex }: Props) {
+// frontend/src/components/chat/PlanStepsBox.tsx
+
+export function PlanStepsBox({ toolCalls, toolResults, planComplete, messageIndex }: Props) {
   const { state: appState, dispatch: appDispatch } = useAppContext();
   const { state: chatState, dispatch: chatDispatch } = useChatContext();
   const { sendMessage, sendRaw } = useWebSocket();
   const { t } = useTranslation();
 
-  // Find create_plan tool call
-  const createPlanCall = toolCalls.find((tc) => tc.name === 'create_plan');
-  if (!createPlanCall) return null;
+  const createPlanCall = toolCalls?.find((tc) => tc.name === 'create_plan');
+  const tcArgs = createPlanCall?.arguments as any;
 
-  const args = createPlanCall.arguments as {
-    goal?: string;
-    steps?: Array<{ name: string; description?: string }>;
-  };
+  // 1. 데이터 안전 추출 (중첩 객체, 문자열 JSON 등 모든 엣지 케이스 방어)
+  let rawGoal = 'Plan';
+  let rawSteps: any[] = [];
+  let rawResults: any[] = [];
 
-  if (!args?.steps?.length) return null;
+  const pc = planComplete as any;
+  if (pc && typeof pc === 'object') {
+    rawGoal = pc.goal || pc.plan?.goal || tcArgs?.goal || 'Plan';
+    rawSteps = pc.steps || pc.plan?.steps || tcArgs?.steps;
+    rawResults = pc.results || pc.plan?.results;
+  } else if (tcArgs) {
+    rawGoal = tcArgs.goal || 'Plan';
+    rawSteps = tcArgs.steps;
+  }
 
-  // Merge with live detail panel data for step statuses + tools
+  // LLM이 배열을 문자열(String)로 내려보낸 경우 파싱 처리
+  if (typeof rawSteps === 'string') {
+    try { rawSteps = JSON.parse(rawSteps); } catch(e) { rawSteps = []; }
+  }
+  if (typeof rawResults === 'string') {
+    try { rawResults = JSON.parse(rawResults); } catch(e) { rawResults = []; }
+  }
+
+  // steps 데이터가 정상적인 배열이 아니면 렌더링 중단 (MessageBubble이 알아서 원본 텍스트 노출함)
+  if (!Array.isArray(rawSteps) || rawSteps.length === 0) return null;
+
+  const args = { goal: rawGoal, steps: rawSteps };
   const panelSteps = appState.detailPanelData?.steps;
   const panelResults = appState.detailPanelData?.results;
 
-  const steps: PlanStepDisplay[] = args.steps.map((s, i) => {
+  const steps: PlanStepDisplay[] = args.steps.map((s: any, i: number) => {
     const liveStatus = panelSteps?.[i]?.status;
     const liveTool = panelSteps?.[i]?.tool;
-    const stepResult = toolResults?.find((tr) => tr.step === i + 1);
+    const pcStep = Array.isArray(rawSteps) ? rawSteps[i] : undefined;
+    const trResult = toolResults?.find((tr) => tr.step === i + 1);
+    const pcResult = Array.isArray(rawResults) ? rawResults.find((r: any) => r.step === i + 1) : undefined;
+    const stepResult = trResult || pcResult;
 
     let status: PlanStepDisplay['status'] = 'pending';
     if (liveStatus) {
       status = liveStatus;
+    } else if (pcStep?.status) {
+      status = pcStep.status;
     } else if (stepResult) {
       status = stepResult.success ? 'completed' : 'error';
     }
 
     return {
-      name: s.name,
+      name: s.name || `Step ${i + 1}`,
       description: s.description || '',
       status,
-      tool: liveTool || stepResult?.tool,
+      tool: liveTool || pcStep?.tool || stepResult?.tool,
     };
   });
 
-  // Merge results from two sources: props (message history) + AppContext (live)
   const getStepResults = (stepNum: number): PlanStepResult[] => {
     const fromState = panelResults?.filter(r => r.step === stepNum) || [];
     if (fromState.length > 0) return fromState;
-    // Fallback to toolResults from message
+
+    if (Array.isArray(rawResults)) {
+      const fromPlanComplete = rawResults.filter((r: any) => r.step === stepNum);
+      if (fromPlanComplete.length > 0) return fromPlanComplete;
+    }
+
     return (toolResults?.filter(tr => tr.step === stepNum) || []).map(tr => ({
       step: tr.step ?? 0,
       tool: tr.tool,
@@ -98,48 +128,48 @@ export function PlanStepsBox({ toolCalls, toolResults, messageIndex }: Props) {
   };
 
   const handleMoreDetail = () => {
-    // 1. 현재 메시지의 전체 텍스트 내용 가져오기 (<think> 토큰 포함)
     const currentMessage = chatState.messages[messageIndex];
     const rawContent = currentMessage?.content || '';
 
-    // 2. <think> 태그를 마크다운 형태로 예쁘게 변환 (PlanTab의 ReactMarkdown이 인식하도록)
     const formattedAnalysis = rawContent
       .replace(/<think>/g, '### 🤔 Thought Process\n\n')
       .replace(/<\/think>/g, '\n\n---\n\n### 📋 Generated Plan\n\n');
 
+    const resultsArray = (Array.isArray(rawResults) && rawResults.length > 0) 
+      ? rawResults 
+      : (toolResults?.map(tr => ({
+          step: tr.step ?? 0,
+          tool: tr.tool,
+          success: tr.success,
+          result: tr.result,
+        })) || []);
+
     const planData: DetailPanelData = {
-      goal: args.goal || 'Plan',
+      goal: args.goal,
       steps: steps.map(s => ({
         name: s.name,
         description: s.description,
         status: s.status,
         tool: s.tool,
       })),
-      results: toolResults?.map(tr => ({
-        step: tr.step ?? 0,
-        tool: tr.tool,
-        success: tr.success,
-        result: tr.result,
-      })) || [],
+      results: resultsArray,
       codes: {},
-      // 3. 원래는 '' (빈 문자열)이었으나, 변환된 사고 과정+플랜 내용을 주입
       analysis: formattedAnalysis,
       currentStep: steps.length,
     };
     
-    toolResults?.forEach(tr => {
-      if ((tr as Record<string, unknown>).code && tr.step != null) {
-        planData.codes[tr.step - 1] = String((tr as Record<string, unknown>).code);
+    resultsArray.forEach((tr: any) => {
+      const resData = tr.result as Record<string, unknown>;
+      if (resData && typeof resData === 'object' && resData.code && tr.step != null) {
+        planData.codes[tr.step - 1] = String(resData.code);
       }
     });
     
     appDispatch({ type: 'SET_DETAIL_PANEL_DATA', payload: planData });
-    // 4. 클릭 시 'outputs'가 아닌 'plan' 탭으로 즉시 포커스 이동
     appDispatch({ type: 'SET_ACTIVE_DETAIL_TAB', payload: 'plan' });
   };
 
-  // Check if this plan box is currently active
-  const isActive = appState.detailPanelData?.goal === (args.goal || 'Plan') &&
+  const isActive = appState.detailPanelData?.goal === args.goal &&
     appState.detailPanelData?.steps?.length === steps.length;
 
   // Step action handlers
@@ -152,7 +182,7 @@ export function PlanStepsBox({ toolCalls, toolResults, messageIndex }: Props) {
       mode: 'plan',
       rerun: true,
       rerun_steps: [{ name: steps[stepIndex].name, description: steps[stepIndex].description }],
-      rerun_goal: args.goal || '',
+      rerun_goal: args.goal,
       retry_step: stepIndex + 1,
     });
   };
@@ -174,12 +204,7 @@ export function PlanStepsBox({ toolCalls, toolResults, messageIndex }: Props) {
   const handleAskPlan = () => {
     chatDispatch({
       type: 'ADD_STEP_QUESTION',
-      payload: {
-        stepNum: 0,
-        tool: '',
-        stepName: args.goal || 'Plan',
-        context: '',
-      },
+      payload: { stepNum: 0, tool: '', stepName: args.goal, context: '' },
     });
   };
 
@@ -210,22 +235,10 @@ export function PlanStepsBox({ toolCalls, toolResults, messageIndex }: Props) {
       onClick={handleMoreDetail}
     >
       <div className="plan-goal plan-goal-row">
-        <span className="plan-goal-text">{args.goal || 'Plan'}</span>
+        <span className="plan-goal-text">{args.goal}</span>
         <div className="plan-goal-actions">
-          <button
-            className="plan-ref-btn"
-            onClick={(e) => { e.stopPropagation(); handleAskPlan(); }}
-            title={t('tooltip.plan_ref') || 'Ask about this plan'}
-          >
-            ?
-          </button>
-          <button
-            className="plan-regen-btn"
-            onClick={(e) => { e.stopPropagation(); handleRegenPlan(); }}
-            title={t('tooltip.regenerate_plan') || 'Regenerate plan'}
-          >
-            ↻
-          </button>
+          <button className="plan-ref-btn" onClick={(e) => { e.stopPropagation(); handleAskPlan(); }} title={t('tooltip.plan_ref') || 'Ask about this plan'}>?</button>
+          <button className="plan-regen-btn" onClick={(e) => { e.stopPropagation(); handleRegenPlan(); }} title={t('tooltip.regenerate_plan') || 'Regenerate plan'}>↻</button>
         </div>
       </div>
       <div className="plan-steps">

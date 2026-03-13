@@ -27,9 +27,13 @@ export function MessageBubble({ message, isLast, isStreaming, messageIndex, onSa
   // Parse content: extract [THINK] blocks + strip other special tokens
   const { displayContent, thinkBlocks } = parseContent(message.content);
 
-  // Plan mode: hide Phase A streaming tokens (before create_plan tool call arrives)
+  // 👇 [수정됨] 백엔드에서 오는 planComplete 데이터나 tool_call 데이터가 있는지 확실하게 확인합니다.
   const isPlanMode = chatState.mode === 'plan';
-  const hasPlanCall = message.toolCalls?.some((tc) => tc.name === 'create_plan');
+  const pc = message.planComplete as any;
+  const createPlanCall = message.toolCalls?.find((tc) => tc.name === 'create_plan');
+  
+  // 데이터가 배열 형태로 존재하거나, toolCall이 있을 때만 true를 반환합니다.
+  const hasPlanCall = !!createPlanCall || (pc && (Array.isArray(pc.steps) || Array.isArray(pc.plan?.steps)));
   const showPlanCreatingIndicator = !isUser && isPlanMode && isStreaming && isLast && !hasPlanCall;
 
   return (
@@ -105,8 +109,9 @@ export function MessageBubble({ message, isLast, isStreaming, messageIndex, onSa
         {/* Plan steps box (for create_plan tool calls) */}
         {hasPlanCall && (
           <PlanStepsBox
-            toolCalls={message.toolCalls!}
-            toolResults={message.toolResults}
+            toolCalls={message.toolCalls || []}
+            toolResults={message.toolResults || []}
+            planComplete={message.planComplete} /* 👇 [수정됨] 이 데이터가 넘어가야 박스가 그려집니다 */
             messageIndex={messageIndex}
           />
         )}
