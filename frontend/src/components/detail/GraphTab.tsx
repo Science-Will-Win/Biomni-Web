@@ -70,20 +70,28 @@ export function GraphTab() {
     if (!data?.steps?.length) return;
 
     // Avoid rebuilding for the same plan
-    const planKey = JSON.stringify(data.steps.map(s => s.name));
+    const planKey = JSON.stringify(data.steps.map((s: any) => 
+      typeof s === 'string' ? s : (s.name || s.task || s.description || s.tool || '')
+    ));
+
     if (planKey === lastPlanRef.current) {
       // Just update step statuses and tools
-      data.steps.forEach((step, i) => {
+      data.steps.forEach((step: any, i) => {
         const nodeId = `step-${i + 1}`;
-        if (step.status) {
+        const status = typeof step === 'string' ? 'pending' : step.status;
+        const tool = typeof step === 'string' ? '' : step.tool;
+
+        if (status) {
           engine.setNodeStatus(nodeId, step.status as NodeStatus);
         }
-        if (step.tool) {
+        if (tool) {
           engine.setNodeTool(nodeId, step.tool);
         }
       });
       return;
     }
+
+    lastPlanRef.current = planKey;
 
     // If we already restored from localStorage, skip rebuilding
     if (restoredRef.current) {
@@ -97,12 +105,16 @@ export function GraphTab() {
     // Map DetailPanelData → PlanData format for createFromPlan
     const planData = {
       goal: data.goal,
-      steps: data.steps.map((step, i) => ({
-        id: `${i + 1}`,
-        name: step.name,
-        description: step.description,
-        tool: step.tool || '',
-      })),
+      steps: data.steps.map((step: any, i) => {
+        const isString = typeof step === 'string';
+        return {
+          id: `${i + 1}`,
+          name: isString ? `Step ${i + 1}` : (step.name || step.task || step.title || `Step ${i + 1}`),
+          description: isString ? step : (step.description || step.details || step.name || ''),
+          tool: isString ? '' : (step.tool || step.action || ''),
+          status: isString ? 'pending' : (step.status || 'pending')
+        };
+      }),
     };
 
     // Build new graph
@@ -114,13 +126,16 @@ export function GraphTab() {
     }
 
     // Apply initial step statuses and tools
-    data.steps.forEach((step, i) => {
+    data.steps.forEach((step: any, i) => {
       const nodeId = `step-${i + 1}`;
-      if (step.status) {
-        engine.setNodeStatus(nodeId, step.status as NodeStatus);
+      const status = typeof step === 'string' ? 'pending' : step.status;
+      const tool = typeof step === 'string' ? '' : step.tool;
+      
+      if (status) {
+        engine.setNodeStatus(nodeId, status as NodeStatus);
       }
-      if (step.tool) {
-        engine.setNodeTool(nodeId, step.tool);
+      if (tool) {
+        engine.setNodeTool(nodeId, tool);
       }
     });
 

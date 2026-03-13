@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { useAppContext } from '@/context/AppContext';
 import { useTranslation } from '@/i18n';
 import { PlanTab } from './PlanTab';
@@ -9,6 +10,16 @@ export function DetailPanel() {
   const { state, dispatch } = useAppContext();
   const { t } = useTranslation();
   const activeTab = state.activeDetailTab;
+  const prevStepsLengthRef = useRef(0);
+
+  useEffect(() => {
+    const currentStepsLength = state.detailPanelData?.steps?.length || 0;
+    // 이전에 step이 없다가 새롭게 생성된 경우
+    if (currentStepsLength > 0 && prevStepsLengthRef.current === 0) {
+      dispatch({ type: 'SET_ACTIVE_DETAIL_TAB', payload: 'graph' });
+    }
+    prevStepsLengthRef.current = currentStepsLength;
+  }, [state.detailPanelData?.steps, dispatch]);
 
   return (
     <div className="detail-panel">
