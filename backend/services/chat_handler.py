@@ -27,8 +27,8 @@ sys.modules["langchain.schema.document"] = langchain_core.documents
 
 # [Langfuse & LangChain Integrations]
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langfuse import Langfuse
 from langfuse.decorators import observe, langfuse_context
-from langfuse.callback import CallbackHandler
 
 logger = logging.getLogger("biomni_backend.chat_handler")
 
@@ -119,20 +119,43 @@ class ChatHandler:
             full_response = ""
 
             settings = get_settings()
-            langfuse_handler = CallbackHandler(
+            
+            # --- [수정된 부분: 확실한 Single Trace 구현 (에러 원천 차단)] ---
+            # CallbackHandler에 직접 넣지 않고, 명시적으로 Trace를 만들어 핸들러를 가져옵니다.
+            langfuse_client = Langfuse(
                 public_key=settings.LANGFUSE_PUBLIC_KEY,
                 secret_key=settings.LANGFUSE_SECRET_KEY,
-                host=settings.LANGFUSE_HOST,
-                session_id=conv_id,         # 전체 대화를 세션으로 묶음
-                tags=["Biomni-A1-Agent"]    # 필터링을 위한 태그
+                host=settings.LANGFUSE_HOST
             )
+
+            # conv_id를 Trace ID로 강제 고정하여 끊어진 대화도 동일한 Trace 안으로 병합(Upsert)시킴
+            trace = langfuse_client.trace(
+                id=conv_id,
+                session_id=conv_id,
+                tags=["Biomni-A1-Agent"]
+            )
+            
+            # 강제 고정된 Trace에 연결된 LangChain Handler 추출
+            langfuse_handler = trace.get_langchain_handler()
+
+            # Biomni 쪽에 붙어있는 @observe(툴 검색, 코드 실행 등) 데코레이터들도 
+            # 같은 Trace ID를 공유하도록 컨텍스트 동기화
+            try:
+                langfuse_context.update_current_trace(
+                    id=conv_id,
+                    session_id=conv_id,
+                    tags=["Biomni-A1-Agent"]
+                )
+            except Exception as e:
+                logger.debug(f"Langfuse context sync issue (can be ignored): {e}")
+            # -----------------------------------------------------------------
 
             # 3. LangGraph 실행 입력 (원본 A1의 StateGraph를 그대로 탑니다)
             inputs = {"messages": lc_history, "next_step": None}
             config = {
                 "recursion_limit": 500, 
                 "configurable": {"thread_id": conv_id},
-                "callbacks": [langfuse_handler] # 👈 핵심: 콜백을 주입하여 에이전트의 모든 동작을 자동 트래킹
+                "callbacks": [langfuse_handler] # 👈 하나의 Trace에 모두 트래킹됨
             }
 
             # 4. LangChain v2 astream_events를 이용한 심층 스트리밍 (그래프 내부의 모든 일을 엿봄)
