@@ -1,18 +1,34 @@
 """Chat Handler — Core chat processing service bridging Backend and original Biomni A1."""
 
-import logging
+import logging, sys
 from typing import AsyncGenerator, Dict, Any, Optional
 from uuid import UUID
-from langfuse.callback import CallbackHandler
-from config import get_settings
-
-from langchain_core.messages import HumanMessage, AIMessage
 
 from config import get_settings
+
 from models.schemas import ChatEvent, ChatRequest, StepQuestionRequest, RetryStepRequest
 from services.conversation_service import ConversationService
 from biomni.agent.a1 import A1
 from services.llm_service import get_llm_service, _PROVIDER_TO_SOURCE
+
+# --- [Monkey Patching: 호환성 해결] ---
+import langchain_core.callbacks
+import langchain_core.callbacks.base
+import langchain_core.agents
+import langchain_core.documents
+import langchain_core.messages
+import langchain_core.outputs
+
+sys.modules["langchain.callbacks"] = langchain_core.callbacks
+sys.modules["langchain.callbacks.base"] = langchain_core.callbacks.base
+sys.modules["langchain.schema"] = langchain_core.messages 
+sys.modules["langchain.schema.agent"] = langchain_core.agents
+sys.modules["langchain.schema.document"] = langchain_core.documents
+
+# [Langfuse & LangChain Integrations]
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langfuse.decorators import observe, langfuse_context
+from langfuse.callback import CallbackHandler
 
 logger = logging.getLogger("biomni_backend.chat_handler")
 
@@ -118,7 +134,7 @@ class ChatHandler:
                 "configurable": {"thread_id": conv_id},
                 "callbacks": [langfuse_handler] # 👈 핵심: 콜백을 주입하여 에이전트의 모든 동작을 자동 트래킹
             }
-            
+
             # 4. LangChain v2 astream_events를 이용한 심층 스트리밍 (그래프 내부의 모든 일을 엿봄)
             async for event in agent.app.astream_events(inputs, version="v2", config=config):
                 if self._stop_flags.get(conv_id):
