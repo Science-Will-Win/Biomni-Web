@@ -3,6 +3,8 @@
 import logging
 from typing import AsyncGenerator, Dict, Any, Optional
 from uuid import UUID
+from langfuse.callback import CallbackHandler
+from config import get_settings
 
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -100,10 +102,23 @@ class ChatHandler:
             agent = await self._get_agent(conv_id, db)
             full_response = ""
 
+            settings = get_settings()
+            langfuse_handler = CallbackHandler(
+                public_key=settings.LANGFUSE_PUBLIC_KEY,
+                secret_key=settings.LANGFUSE_SECRET_KEY,
+                host=settings.LANGFUSE_HOST,
+                session_id=conv_id,         # 전체 대화를 세션으로 묶음
+                tags=["Biomni-A1-Agent"]    # 필터링을 위한 태그
+            )
+
             # 3. LangGraph 실행 입력 (원본 A1의 StateGraph를 그대로 탑니다)
             inputs = {"messages": lc_history, "next_step": None}
-            config = {"recursion_limit": 500, "configurable": {"thread_id": conv_id}}
-
+            config = {
+                "recursion_limit": 500, 
+                "configurable": {"thread_id": conv_id},
+                "callbacks": [langfuse_handler] # 👈 핵심: 콜백을 주입하여 에이전트의 모든 동작을 자동 트래킹
+            }
+            
             # 4. LangChain v2 astream_events를 이용한 심층 스트리밍 (그래프 내부의 모든 일을 엿봄)
             async for event in agent.app.astream_events(inputs, version="v2", config=config):
                 if self._stop_flags.get(conv_id):

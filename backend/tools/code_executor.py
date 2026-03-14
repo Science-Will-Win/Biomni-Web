@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 
 from config import get_settings
 
+from langfuse.decorators import observe, langfuse_context
+
 logger = logging.getLogger("aigen.code_executor")
 
 
@@ -36,13 +38,37 @@ class CodeExecutor:
     def __init__(self) -> None:
         self._settings = get_settings()
 
+    @observe(name="Sandbox_Code_Execution", as_type="generation")
     async def execute(
         self, code: str, language: str, conv_id: str, step_id: str
     ) -> CodeExecutionResult:
         """Async wrapper — delegates to _execute_sync via thread."""
-        return await asyncio.to_thread(
+        
+        # Langfuse에 입력될 코드와 언어 환경 기록
+        langfuse_context.update_current_observation(
+            input={
+                "language": language, 
+                "step_id": step_id, 
+                "source_code": code
+            }
+        )
+
+        result = await asyncio.to_thread(
             self._execute_sync, code, language, conv_id, step_id
         )
+
+        # 코드 실행 후 성공 여부 및 로그 기록
+        langfuse_context.update_current_observation(
+            output={
+                "success": result.success,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "figures_generated": len(result.figures),
+                "tables_generated": len(result.tables)
+            }
+        )
+        
+        return result
 
     # ------------------------------------------------------------------
     # Sync execution (runs in thread pool)
