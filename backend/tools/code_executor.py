@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from langfuse.decorators import observe
 
 from config import get_settings
 
@@ -36,6 +37,7 @@ class CodeExecutor:
     def __init__(self) -> None:
         self._settings = get_settings()
 
+    @observe(name="Run Sandbox Code") # 이 데코레이터가 실행 정보를 캡처합니다
     async def execute(
         self, code: str, language: str, conv_id: str, step_id: str
     ) -> CodeExecutionResult:

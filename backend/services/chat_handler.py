@@ -30,11 +30,24 @@ from services.prompt_builder import PromptMode, build_prompt
 from services.tool_service import ToolService
 from tools.tool_parser import parse_step_output
 
+from langfuse import Langfuse
+from langfuse.callback import CallbackHandler
+from langfuse.decorators import observe, langfuse_context
+
 logger = logging.getLogger("aigen.chat_handler")
 
 MAX_TOOL_ITERATIONS = 10
 MAX_RETRY_ATTEMPTS = 3
 
+def get_langfuse_client() -> Optional[Langfuse]:
+    settings = get_settings()
+    if settings.LANGFUSE_PUBLIC_KEY and settings.LANGFUSE_SECRET_KEY:
+        return Langfuse(
+            public_key=settings.LANGFUSE_PUBLIC_KEY,
+            secret_key=settings.LANGFUSE_SECRET_KEY,
+            host=settings.LANGFUSE_HOST
+        )
+    return None
 
 def _ev(event_type: str, data: Dict[str, Any]) -> ChatEvent:
     """Shortcut to create a ChatEvent."""
@@ -58,7 +71,7 @@ class ChatHandler:
 
     # ═══════════════════════════════════════════
     # Public API
-    # ═══════════════════════════════════════════
+    # ═══════════════════════════════════════════\
 
     async def handle_chat(
         self, request: ChatRequest, db: AsyncSession
@@ -74,17 +87,26 @@ class ChatHandler:
         conv_svc = ConversationService(db)
         llm_service = get_llm_service()
 
+        # 1. 초기 세션/트레이스 설정
+        langfuse_client = get_langfuse_client()
+        trace = None
+        lf_handler = None
+        conv_id = request.conv_id
+
         try:
-            # 1. Conversation
-            if request.conv_id:
-                conv_id = request.conv_id
-                conv = await conv_svc.get_conversation(UUID(conv_id))
-                if conv is None:
-                    yield _ev("error", {"error": f"Conversation {conv_id} not found"})
-                    return
-            else:
+            if not conv_id:
                 conv = await conv_svc.create_conversation(first_message=request.message)
                 conv_id = str(conv.id)
+            
+            # [수정] 수동으로 Trace 생성 (데코레이터 대신 이 방식이 스트리밍에 더 안전합니다)
+            if langfuse_client:
+                trace = langfuse_client.trace(
+                    name="Biomni Research Session",
+                    session_id=conv_id,
+                    input=request.message
+                )
+                # LangChain의 로깅을 이 Trace 하위로 묶어주는 핸들러 추출
+                lf_handler = trace.get_langchain_handler()
 
             # 2. Process files + save user message
             file_text, processed_files = await self._process_files(request.files)
@@ -120,17 +142,23 @@ class ChatHandler:
                 async for event in self._run_step_loop(conv_id, history, behavior, db):
                     yield event
                 return
+            
+            if request.rerun and request.rerun_steps:
+                # ... 리런 로직 ...
+                async for event in self._run_step_loop(conv_id, history, behavior, db, lf_handler):
+                    yield event
+                return
 
             # 5. Mode branch
             mode = request.mode or "plan"
             if mode == "agent":
                 async for event in self._stream_direct_chat(
-                    conv_id, history, behavior, db
+                    conv_id, history, behavior, db, lf_handler
                 ):
                     yield event
             else:
                 async for event in self._stream_plan_chat(
-                    conv_id, full_message, history, behavior, db
+                    conv_id, full_message, history, behavior, db, lf_handler, trace
                 ):
                     yield event
 
@@ -138,6 +166,8 @@ class ChatHandler:
             logger.exception("handle_chat error")
             yield _ev("error", {"error": str(e)})
         finally:
+            if langfuse_client:
+                langfuse_client.flush() # [중요] 데이터 강제 전송
             self._stop_flags.pop(conv_id, None)
 
     async def handle_replan(
@@ -310,7 +340,7 @@ class ChatHandler:
     # ═══════════════════════════════════════════
 
     async def _stream_direct_chat(
-        self, conv_id: str, history: List, behavior: dict, db: AsyncSession
+        self, conv_id: str, history: List, behavior: dict, db: AsyncSession, lf_handler=None
     ) -> AsyncGenerator[ChatEvent, None]:
         """Agent mode — direct LLM streaming without tools."""
         llm_service = get_llm_service()
@@ -326,7 +356,8 @@ class ChatHandler:
         llm = await llm_service.get_llm_instance(db=db)
         full_response = ""
 
-        async for chunk in llm.astream(messages):
+        run_config = {"callbacks": [lf_handler]} if lf_handler else {}
+        async for chunk in llm.astream(messages, config=run_config):
             if self._stop_flags.get(conv_id):
                 yield _ev("done", {"done": True, "stopped": True})
                 return
@@ -367,7 +398,7 @@ class ChatHandler:
 
     async def _stream_plan_chat(
         self, conv_id: str, message: str, history: List,
-        behavior: dict, db: AsyncSession
+        behavior: dict, db: AsyncSession, lf_handler=None
     ) -> AsyncGenerator[ChatEvent, None]:
         """Plan mode — Phase A: create plan, Phase B: execute steps.
 
@@ -412,7 +443,8 @@ class ChatHandler:
             full_response = ""
             finish_reason = None
 
-            async for chunk in plan_llm.astream(plan_messages):
+            callbacks = [lf_handler] if lf_handler else []
+            async for chunk in plan_llm.astream(plan_messages, config={"callbacks": callbacks}):
                 if self._stop_flags.get(conv_id):
                     yield _ev("done", {"done": True, "stopped": True})
                     return
@@ -502,12 +534,12 @@ class ChatHandler:
         history.append(AIMessage(content=full_response))
 
         # ── Phase B: Step Execution ──
-        async for event in self._run_step_loop(conv_id, history, behavior, db):
+        async for event in self._run_step_loop(conv_id, history, behavior, db, lf_handler):
             yield event
 
     async def _run_step_loop(
         self, conv_id: str, history: List,
-        behavior: dict, db: AsyncSession
+        behavior: dict, db: AsyncSession, lf_handler=None, parent_trace=None
     ) -> AsyncGenerator[ChatEvent, None]:
         """Plan step execution loop — single call per step.
 
@@ -526,6 +558,8 @@ class ChatHandler:
         steps = plan_state["steps"]
         uses_tool_calls = bool(behavior.get("tool_calls_format"))
 
+        langfuse_client = get_langfuse_client()
+
         for step_idx in range(plan_state["current_step"], len(steps)):
             if self._stop_flags.get(conv_id):
                 await self._save_plan_complete(conv_id, conv_svc, stopped=True)
@@ -537,6 +571,18 @@ class ChatHandler:
 
             llm = await llm_service.get_llm_instance(db=db)
 
+            step_span = None
+            step_handler = lf_handler
+            
+            if parent_trace:
+                # 1. 각 Step을 Span으로 생성
+                step_span = parent_trace.span(
+                    name=f"Step {step_idx + 1}: {step.get('name')}",
+                    input=step.get("description")
+                )
+                # 2. 이 Span 전용 핸들러 추출 (이게 있어야 LLM 답변이 이 Step 안으로 들어감)
+                step_handler = step_span.get_langchain_handler()
+            
             # ── Build prompt: Biomni full prompt + plan checklist ──
             app_settings = get_settings()
             use_cg = behavior.get("use_code_gen", False)
@@ -550,20 +596,38 @@ class ChatHandler:
             if biomni_loader.is_initialized():
                 step_query = step.get("description", step.get("name", ""))
                 use_llm_ret = behavior.get("use_llm_retrieval", False)
-                if use_llm_ret:
-                    retrieval_llm = await llm_service.get_llm_instance(db=db)
-                    selected_tools = await biomni_loader.retrieval_with_llm(
-                        step_query, retrieval_llm, max_tools=15,
+
+                retrieval_span = None
+                if step_span:
+                    retrieval_span = step_span.span(
+                        name="Tool Retrieval",
+                        input={"query": step.get("description", ""), "use_llm": behavior.get("use_llm_retrieval", False)}
                     )
-                    logger.info(f"Tool retrieval (LLM): step {step_idx+1}")
-                else:
-                    selected_tools = biomni_loader.keyword_search(
-                        step_query, max_results=15,
-                    )
-                    logger.info(f"Tool retrieval (keyword): step {step_idx+1}")
-                tool_desc = biomni_loader.format_tool_desc(selected_tools)
-                retrieved_tool_names = [t.get("name", "?") for t in selected_tools]
-                logger.info(f"  → {len(retrieved_tool_names)} tools: {retrieved_tool_names[:5]}")
+
+                try:
+                    if use_llm_ret:
+                        retrieval_llm = await llm_service.get_llm_instance(db=db)
+                        selected_tools = await biomni_loader.retrieval_with_llm(
+                            step_query, retrieval_llm, max_tools=15,
+                        )
+                    else:
+                        selected_tools = biomni_loader.keyword_search(
+                            step_query, max_results=15,
+                        )
+                        
+                    tool_desc = biomni_loader.format_tool_desc(selected_tools)
+                    retrieved_tool_names = [t.get("name", "?") for t in selected_tools]
+                    
+                    # [추가] 정상 종료 시 Span 기록
+                    if retrieval_span:
+                        retrieval_span.end(output={"retrieved": retrieved_tool_names})
+                    
+                        
+                except Exception as e:
+                    # [추가] 에러 발생 시 Span에 Error 기록
+                    if retrieval_span:
+                        retrieval_span.end(level="ERROR", status_message=str(e))
+                    raise
             else:
                 tool_desc = tool_service.generate_tools_description()
                 retrieved_tool_names = []
@@ -634,14 +698,17 @@ class ChatHandler:
 
                 full_response = ""
                 try:
-                    async for chunk in llm.astream(step_messages):
+                    # [핵심 수정] run_config를 정의하고 astream에 전달하세요!
+                    # step_handler를 전달해야 토큰들이 하나로 합쳐져서 보입니다.
+                    run_config = {"callbacks": [step_handler]} if step_handler else {}
+                    async for chunk in llm.astream(step_messages, config=run_config): # <--- config 추가!
                         if self._stop_flags.get(conv_id):
-                            await self._save_plan_complete(conv_id, conv_svc, stopped=True)
-                            yield _ev("done", {"done": True, "stopped": True})
+                            # ...
                             return
                         token = chunk.content if hasattr(chunk, "content") else str(chunk)
                         if token:
                             full_response += token
+                            yield _ev("token", {"token": token})
                 except Exception as stream_err:
                     logger.error(f"Step {step_idx+1} LLM streaming failed: {stream_err}")
                     _err_data = {"error": f"LLM error: {stream_err}"}
@@ -673,6 +740,13 @@ class ChatHandler:
                             }
                         })
 
+                        tool_span = None
+                        if trace:
+                            tool_span = trace.span(
+                                name=f"Tool Execution: {tc.name}",
+                                input=tc.arguments
+                            )
+
                         # Biomni tool direct execution
                         if tc.name.startswith("biomni."):
                             result = await self._execute_biomni_tool(
@@ -692,6 +766,15 @@ class ChatHandler:
                             except Exception as tool_err:
                                 logger.error(f"Tool {tc.name} execution failed: {tool_err}")
                                 result = {"success": False, "error": str(tool_err)}
+
+                        if tool_span:
+                            # 성공 여부에 따라 에러 레벨 지정
+                            level = "DEFAULT" if result.get("success", False) else "ERROR"
+                            tool_span.end(
+                                output=result,
+                                level=level
+                            )
+
                         yield _ev("tool_result", {
                             "tool_result": {
                                 "success": result.get("success", False),
@@ -734,10 +817,28 @@ class ChatHandler:
                         tool_label = used_tools[0] if used_tools else "code_gen"
                         last_tool_label = tool_label
 
+                        code_span = None
+                        if trace:
+                            code_span = trace.span(
+                                name="Run Sandbox Code",
+                                input={"code": block.code, "language": block.language, "tool": tool_label}
+                            )
+
                         exec_result = await code_executor.execute(
                             block.code, block.language,
                             conv_id=conv_id, step_id=str(step_idx),
                         )
+
+                        if code_span:
+                            code_span.end(
+                                output={
+                                    "stdout": exec_result.stdout,
+                                    "stderr": exec_result.stderr,
+                                    "success": exec_result.success
+                                },
+                                level="ERROR" if not exec_result.success else "DEFAULT"
+                            )
+
                         obs = self._format_observation(exec_result, behavior)
                         yield _ev("tool_result", {
                             "tool_result": {
@@ -831,6 +932,8 @@ class ChatHandler:
                 })
                 history.append(AIMessage(content=full_response))
 
+            if step_span:
+                step_span.end()
         # All steps done — send plan_complete (analysis generated by frontend via /api/analyze_plan)
         plan_complete_data = await self._save_plan_complete(conv_id, conv_svc)
         yield _ev("done", {"done": True, "plan_complete": plan_complete_data})
