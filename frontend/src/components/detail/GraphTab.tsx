@@ -67,7 +67,14 @@ export function GraphTab() {
   // Build graph from plan data when detailPanelData changes
   useEffect(() => {
     const data = state.detailPanelData;
-    if (!data?.steps?.length) return;
+    if (!data?.steps?.length) {
+      // Plan cleared (e.g. conversation deleted) → clear graph engine too
+      if (engine.state.nodes.size > 0) {
+        engine.clear();
+        lastPlanRef.current = '';
+      }
+      return;
+    }
 
     // Avoid rebuilding for the same plan
     const planKey = JSON.stringify(data.steps.map(s => s.name));
@@ -85,18 +92,37 @@ export function GraphTab() {
       return;
     }
 
-    // If we already restored from localStorage, skip rebuilding
+    // If we already restored from localStorage, check if it matches the current plan
     if (restoredRef.current) {
       restoredRef.current = false;
-      lastPlanRef.current = planKey;
-      return;
+      // Verify restored graph matches current plan (step count comparison)
+      const restoredStepNodes = [...engine.state.nodes.values()].filter(
+        (n) => n.type === 'step'
+      ).length;
+      if (restoredStepNodes === data.steps.length) {
+        // Match — just update statuses and skip rebuild
+        lastPlanRef.current = planKey;
+        data.steps.forEach((step, i) => {
+          const nodeId = `step-${i + 1}`;
+          if (step.status) engine.setNodeStatus(nodeId, step.status as NodeStatus);
+          if (step.tool) engine.setNodeTool(nodeId, step.tool);
+        });
+        return;
+      }
+      // Mismatch — fall through to rebuild graph from scratch
+      engine.clear();
     }
 
     lastPlanRef.current = planKey;
 
     // Map DetailPanelData → PlanData format for createFromPlan
+    const lastUserMsg = chatState.messages
+      ?.filter((m: { role: string }) => m.role === 'user')
+      .pop()?.content || '';
+
     const planData = {
       goal: data.goal,
+      userMessage: lastUserMsg,
       steps: data.steps.map((step, i) => ({
         id: `${i + 1}`,
         name: step.name,
@@ -123,6 +149,16 @@ export function GraphTab() {
         engine.setNodeTool(nodeId, step.tool);
       }
     });
+
+    // Update analysis node status
+    const allStepsDone = data.steps.length > 0 && data.steps.every(
+      s => s.status === 'completed' || s.status === 'error' || s.status === 'stopped',
+    );
+    if (data.analysis && typeof data.analysis === 'string' && data.analysis.trim().length > 0) {
+      engine.setNodeStatus('analysis-node', 'completed' as NodeStatus);
+    } else if (allStepsDone) {
+      engine.setNodeStatus('analysis-node', 'running' as NodeStatus);
+    }
 
     // Snapshot initial plan hash
     lastPlanHashRef.current = getExecutionPlanHash(engine.state.nodes, engine.state.connections);
@@ -214,7 +250,11 @@ export function GraphTab() {
         <span className="graph-tab-label">{t('graph.editor_title')}</span>
         <div className="graph-tab-header-actions">
           <button className="graph-popout-btn" onClick={() => setIsPopout(true)} title={t('tooltip.popout')}>
-            ⇗
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 8V19a2 2 0 0 0 2 2h11" />
+              <rect x="8" y="3" width="13" height="13" rx="2" />
+              <path d="M12 12l3-3m0 0v2.5m0-2.5h-2.5" />
+            </svg>
           </button>
           <button className="graph-rerun-btn" onClick={handleRerunPlan}>
             {t('graph.rerun')}
@@ -224,7 +264,7 @@ export function GraphTab() {
       {isPopout ? (
         <>
           <GraphPopout onClose={() => setIsPopout(false)}>
-            <GraphCanvas engine={engine} />
+            <GraphCanvas key="popout" engine={engine} />
           </GraphPopout>
           <div className="graph-popout-notice">
             <span>{t('empty.graph_popout') || 'Graph is open in a separate window'}</span>
@@ -232,7 +272,7 @@ export function GraphTab() {
           </div>
         </>
       ) : (
-        <GraphCanvas engine={engine} />
+        <GraphCanvas key="inline" engine={engine} visible={state.activeDetailTab === 'graph'} />
       )}
     </div>
   );

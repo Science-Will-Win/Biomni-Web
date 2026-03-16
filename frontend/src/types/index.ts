@@ -167,6 +167,7 @@ export interface SettingsResponse {
   refusal_temp_decay: number;
   refusal_min_temp: number;
   refusal_recovery_tokens: number;
+  use_compact_prompt: boolean;
 }
 
 export interface SettingsUpdateRequest {
@@ -181,6 +182,7 @@ export interface SettingsUpdateRequest {
   refusal_temp_decay?: number | null;
   refusal_min_temp?: number | null;
   refusal_recovery_tokens?: number | null;
+  use_compact_prompt?: boolean | null;
 }
 
 export interface SystemPromptResponse {
@@ -197,6 +199,8 @@ export interface ToolCallRequest {
 export interface ExecuteCodeRequest {
   code: string;
   language: string;
+  conv_id?: string;
+  step_index?: number;
 }
 
 export interface NodeManifest {
@@ -269,11 +273,19 @@ export interface ChatMessage {
   files?: Array<Record<string, unknown>>;
 }
 
+export interface CodeData {
+  code: string;
+  language: string;
+  execution?: Record<string, unknown>;
+  fixAttempts?: number;
+  stepIndex: number;
+}
+
 export interface DetailPanelData {
   goal: string;
   steps: PlanStep[];
   results: PlanStepResult[];
-  codes: Record<number, string>;
+  codes: Record<number, string | CodeData>;
   analysis: string;
   currentStep: number;
 }

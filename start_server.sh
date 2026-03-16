@@ -41,7 +41,9 @@ start_sglang() {
     python -m sglang.launch_server \
         --model-path "$MODEL_PATH" \
         --port 30000 \
-        --host 0.0.0.0 &
+        --host 0.0.0.0 \
+        --attention-backend triton \
+        --context-length 8192 &
     SGLANG_PID=$!
     echo "SGLang PID: $SGLANG_PID"
 

@@ -8,6 +8,9 @@ export interface StepQuestion {
   tool: string;
   stepName: string;
   context: string;
+  previousSteps?: string[];
+  planGoal?: string;
+  planSteps?: string[];
 }
 
 // ─── State ───
@@ -148,9 +151,11 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, messages: state.messages.slice(0, action.payload) };
 
     case 'ADD_STEP_QUESTION': {
-      // Avoid duplicates by stepNum
+      // Toggle: if already exists, remove it
       const exists = state.stepQuestions.some((q) => q.stepNum === action.payload.stepNum);
-      if (exists) return state;
+      if (exists) {
+        return { ...state, stepQuestions: state.stepQuestions.filter((q) => q.stepNum !== action.payload.stepNum) };
+      }
       return { ...state, stepQuestions: [...state.stepQuestions, action.payload] };
     }
 

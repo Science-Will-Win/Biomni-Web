@@ -81,8 +81,13 @@ export function ConnectionLine({
   const pathD = bezierPath(from.x, from.y, to.x, to.y);
   const isRef = connection.type === 'ref';
 
+  // Determine port type for connection color
+  const fromDef = getNodeDef(fromNode.type);
+  const fromPortDef = fromDef?.ports?.find(p => p.name === connection.fromPort && p.dir === 'out');
+  const portTypeClass = fromPortDef?.type ? `ng-conn-type-${fromPortDef.type}` : '';
+
   return (
-    <g className={`ng-connection ${selected ? 'ng-connection-selected' : ''}`}>
+    <g className={`ng-connection ${portTypeClass} ${selected ? 'ng-connection-selected' : ''}`}>
       {/* Invisible wider hit area — left-click to select */}
       <path
         d={pathD}
@@ -95,7 +100,7 @@ export function ConnectionLine({
       <path
         d={pathD}
         fill="none"
-        className={isRef ? 'ng-conn-ref' : 'ng-conn-flow'}
+        className={`ng-conn-stroke ${isRef ? 'ng-conn-ref' : 'ng-conn-flow'}`}
         strokeWidth={isRef ? 1.5 : 2}
         strokeDasharray={isRef ? '6 4' : undefined}
         style={{ pointerEvents: 'none' }}
@@ -117,7 +122,7 @@ export function PendingConnectionLine({
       fill="none"
       stroke={isRef ? '#ab47bc' : '#3b82f6'}
       strokeWidth={2}
-      strokeDasharray={isRef ? '6 4' : '4 4'}
+      strokeDasharray={isRef ? '6 4' : undefined}
       opacity={0.7}
       style={{ pointerEvents: 'none' }}
     />

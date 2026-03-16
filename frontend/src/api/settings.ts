@@ -31,3 +31,31 @@ export async function setSystemPrompt(prompt: string): Promise<StatusResponse> {
     body: JSON.stringify({ prompt }),
   });
 }
+
+export interface PromptSection {
+  label: string;
+  content: string;
+}
+
+export interface ComposedPromptData {
+  composed: string;
+  sections: PromptSection[];
+  custom: string;
+}
+
+export interface ComposedPromptsResponse {
+  full: ComposedPromptData;
+  agent: ComposedPromptData;
+  plan: ComposedPromptData;
+}
+
+export async function getComposedPrompts(): Promise<ComposedPromptsResponse> {
+  return fetchJSON('/api/system_prompt/composed');
+}
+
+export async function saveComposedPrompt(mode: string, prompt: string): Promise<StatusResponse> {
+  return fetchJSON('/api/system_prompt/composed', {
+    method: 'POST',
+    body: JSON.stringify({ mode, prompt }),
+  });
+}

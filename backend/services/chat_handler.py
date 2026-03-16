@@ -26,7 +26,7 @@ from models.schemas import (
 )
 from services.conversation_service import ConversationService
 from services.llm_service import get_llm_service
-from services.prompt_builder import PromptMode, build_prompt, SECTION_CODE_GEN_GUIDE
+from services.prompt_builder import PromptMode, build_prompt
 from services.tool_service import ToolService
 from tools.tool_parser import parse_step_output
 
@@ -226,7 +226,7 @@ class ChatHandler:
             messages.append(HumanMessage(content="\n".join(context_parts)))
             messages = self._fix_role_alternation(messages)
 
-            max_ctx = await self._get_max_context(db)
+            max_ctx = await self._get_max_context(db, behavior)
             messages = self._truncate_messages(messages, max_ctx)
 
             llm = await llm_service.get_llm_instance(db=db)
@@ -320,7 +320,7 @@ class ChatHandler:
         messages = [SystemMessage(content=system_prompt)] + history
         messages = self._fix_role_alternation(messages)
 
-        max_ctx = await self._get_max_context(db)
+        max_ctx = await self._get_max_context(db, behavior)
         messages = self._truncate_messages(messages, max_ctx)
 
         llm = await llm_service.get_llm_instance(db=db)
@@ -391,43 +391,75 @@ class ChatHandler:
         # Get base LLM to extract connection params
         base_llm = await llm_service.get_llm_instance(db=db, max_tokens=2048)
 
-        # Plan-specific LLM: lower max_tokens + repetition_penalty to prevent degeneration
-        plan_llm = ChatOpenAI(
-            model=base_llm.model_name,
-            temperature=base_llm.temperature,
-            max_tokens=2048,
-            base_url=base_llm.openai_api_base,
-            api_key=base_llm.openai_api_key or "EMPTY",
-            extra_body={"skip_special_tokens": False, "repetition_penalty": 1.15},
-        )
-
         plan_messages = [SystemMessage(content=plan_prompt), HumanMessage(content=message)]
 
+        # Retry loop: if plan generation hits max_tokens (truncated), retry with stronger repetition penalty
+        MAX_PLAN_RETRIES = 2
+        plan_data = None
         full_response = ""
 
-        async for chunk in plan_llm.astream(plan_messages):
-            if self._stop_flags.get(conv_id):
-                yield _ev("done", {"done": True, "stopped": True})
-                return
+        for attempt in range(MAX_PLAN_RETRIES + 1):
+            rep_penalty = 1.15 + 0.1 * attempt  # 1.15 → 1.25 → 1.35
+            plan_llm = ChatOpenAI(
+                model=base_llm.model_name,
+                temperature=max(0.1, base_llm.temperature * (0.7 ** attempt)),
+                max_tokens=2048,
+                base_url=base_llm.openai_api_base,
+                api_key=base_llm.openai_api_key or "EMPTY",
+                extra_body={"skip_special_tokens": False, "repetition_penalty": rep_penalty},
+            )
 
-            token = chunk.content if hasattr(chunk, "content") else ""
-            if token:
-                full_response += token
-                yield _ev("token", {"token": token})
+            full_response = ""
+            finish_reason = None
 
-        # Log raw output for debugging
-        logger.info(f"Plan raw LLM output ({len(full_response)} chars): {full_response[:500]}")
+            async for chunk in plan_llm.astream(plan_messages):
+                if self._stop_flags.get(conv_id):
+                    yield _ev("done", {"done": True, "stopped": True})
+                    return
 
-        # Parse plan from response
-        plan_data = self._parse_plan_tool_call(full_response, message)
+                token = chunk.content if hasattr(chunk, "content") else ""
+                if token:
+                    full_response += token
+                    yield _ev("token", {"token": token})
+
+                # Capture finish_reason from the last chunk
+                meta = getattr(chunk, "response_metadata", None)
+                if meta and isinstance(meta, dict):
+                    fr = meta.get("finish_reason")
+                    if fr:
+                        finish_reason = fr
+
+            logger.info(
+                f"Plan attempt {attempt + 1}/{MAX_PLAN_RETRIES + 1}: "
+                f"{len(full_response)} chars, finish_reason={finish_reason}, "
+                f"rep_penalty={rep_penalty}"
+            )
+
+            # If truncated by max_tokens, retry
+            if finish_reason == "length":
+                logger.warning(f"Plan truncated (max_tokens), attempt {attempt + 1}")
+                if attempt < MAX_PLAN_RETRIES:
+                    yield _ev("token", {"token": "\n\n🔄 응답이 잘렸습니다. 다시 생성합니다...\n\n"})
+                    continue
+                # Last attempt also truncated — still try to parse what we got
+
+            # Try parsing
+            plan_data = self._parse_plan_tool_call(full_response, message)
+            if plan_data and plan_data.get("steps"):
+                logger.info(f"Plan extracted: goal='{plan_data['goal'][:60]}', {len(plan_data['steps'])} steps")
+                break  # Success
+
+            # Parse failed
+            logger.warning(f"Plan parse failed on attempt {attempt + 1}. Raw: {full_response[:300]}")
+            if attempt < MAX_PLAN_RETRIES:
+                yield _ev("token", {"token": "\n\n🔄 Plan 파싱 실패. 다시 생성합니다...\n\n"})
+                continue
 
         if not plan_data or not plan_data.get("steps"):
-            logger.error(f"Plan parsing failed. Raw output: {full_response[:1000]}")
+            logger.error(f"Plan parsing failed after {MAX_PLAN_RETRIES + 1} attempts. Raw: {full_response[:1000]}")
             yield _ev("token", {"token": "\n\n⚠️ Plan 생성에 실패했습니다. 다시 시도해주세요."})
             yield _ev("done", {"done": True})
             return
-        else:
-            logger.info(f"Plan extracted: goal='{plan_data['goal'][:60]}', {len(plan_data['steps'])} steps")
 
         # System calls create_plan directly (NOT the LLM)
         plan_result = await tool_service.execute_tool("create_plan", plan_data)
@@ -502,21 +534,78 @@ class ChatHandler:
 
             step = steps[step_idx]
             plan_state["current_step"] = step_idx
-            yield _ev("step_start", {"step_start": {"step": step_idx + 1}})
 
             llm = await llm_service.get_llm_instance(db=db)
 
-            # ── Build prompt: [AVAILABLE_TOOLS] + Biomni full prompt ──
-            exec_prompt = build_prompt(PromptMode.FULL, token_format=behavior)
+            # ── Build prompt: Biomni full prompt + plan checklist ──
+            app_settings = get_settings()
+            use_cg = behavior.get("use_code_gen", False)
+            data_lake_path = app_settings.BIOMNI_DATA_PATH or ""
 
-            # For use_code_gen models, add code_gen guide
-            if behavior.get("use_code_gen"):
-                exec_prompt += "\n" + SECTION_CODE_GEN_GUIDE
+            # Biomni tool retrieval — select relevant tools for this step
+            # use_llm_retrieval=true models (trained on Phase 0 format) use LLM retrieval
+            # All other models fall back to keyword-based search
+            from services.biomni_tools import BiomniToolLoader
+            biomni_loader = BiomniToolLoader.get_instance()
+            if biomni_loader.is_initialized():
+                step_query = step.get("description", step.get("name", ""))
+                use_llm_ret = behavior.get("use_llm_retrieval", False)
+                if use_llm_ret:
+                    retrieval_llm = await llm_service.get_llm_instance(db=db)
+                    selected_tools = await biomni_loader.retrieval_with_llm(
+                        step_query, retrieval_llm, max_tools=15,
+                    )
+                    logger.info(f"Tool retrieval (LLM): step {step_idx+1}")
+                else:
+                    selected_tools = biomni_loader.keyword_search(
+                        step_query, max_results=15,
+                    )
+                    logger.info(f"Tool retrieval (keyword): step {step_idx+1}")
+                tool_desc = biomni_loader.format_tool_desc(selected_tools)
+                retrieved_tool_names = [t.get("name", "?") for t in selected_tools]
+                logger.info(f"  → {len(retrieved_tool_names)} tools: {retrieved_tool_names[:5]}")
+            else:
+                tool_desc = tool_service.generate_tools_description()
+                retrieved_tool_names = []
 
-            # Inject [AVAILABLE_TOOLS] token (all tools, directly in prompt)
-            all_schemas = tool_service.get_schemas(exclude_internal=True)
-            available_tools_text = self._build_available_tools_text(all_schemas)
-            full_prompt = available_tools_text + "\n" + exec_prompt
+            # Store retrieved tool info for code_gen context
+            plan_state["_retrieved_tool_desc"] = tool_desc
+
+            yield _ev("step_start", {"step_start": {
+                "step": step_idx + 1,
+                "retrieved_tools": retrieved_tool_names,
+            }})
+
+            # Retrieve use_compact_prompt from global DB settings
+            try:
+                db_settings_res = await db.execute(select(Setting).where(Setting.key == "settings"))
+                db_settings_row = db_settings_res.scalar_one_or_none()
+                is_compact = db_settings_row.value.get("use_compact_prompt", False) if (db_settings_row and db_settings_row.value) else False
+            except Exception:
+                is_compact = False
+
+            exec_prompt = build_prompt(
+                PromptMode.FULL,
+                token_format=behavior,
+                use_code_gen=use_cg,
+                compact=is_compact,
+                tool_desc=tool_desc,
+                data_lake_path=data_lake_path,
+            )
+
+            # [AVAILABLE_TOOLS] — only for non-code_gen models (API models)
+            if use_cg:
+                # code_gen models use [TOOL_CALLS] format; CODE_GEN_GUIDE covers tool usage
+                full_prompt = exec_prompt
+            else:
+                all_schemas = tool_service.get_schemas(exclude_internal=True)
+                available_tools_text = self._build_available_tools_text(all_schemas)
+                full_prompt = available_tools_text + "\n" + exec_prompt
+
+            # Inject plan checklist into system prompt
+            plan_checklist = self._build_plan_checklist(conv_id)
+            if plan_checklist:
+                full_prompt += "\n\n" + plan_checklist
 
             step_context = self._build_step_context(
                 step, step_idx, plan_state["all_results"]
@@ -528,7 +617,7 @@ class ChatHandler:
             )
             messages = self._fix_role_alternation(messages)
 
-            max_ctx = await self._get_max_context(db)
+            max_ctx = await self._get_max_context(db, behavior)
             messages = self._truncate_messages(messages, max_ctx)
 
             # ── LLM call + parse + execute (no bind_tools) ──
@@ -544,16 +633,29 @@ class ChatHandler:
                     return
 
                 full_response = ""
-                async for chunk in llm.astream(step_messages):
-                    if self._stop_flags.get(conv_id):
-                        await self._save_plan_complete(conv_id, conv_svc, stopped=True)
-                        yield _ev("done", {"done": True, "stopped": True})
-                        return
-                    token = chunk.content if hasattr(chunk, "content") else str(chunk)
-                    if token:
-                        full_response += token
-                        # Don't stream tokens during step execution —
-                        # the detail panel shows progress via step_start/tool_result events.
+                try:
+                    async for chunk in llm.astream(step_messages):
+                        if self._stop_flags.get(conv_id):
+                            await self._save_plan_complete(conv_id, conv_svc, stopped=True)
+                            yield _ev("done", {"done": True, "stopped": True})
+                            return
+                        token = chunk.content if hasattr(chunk, "content") else str(chunk)
+                        if token:
+                            full_response += token
+                except Exception as stream_err:
+                    logger.error(f"Step {step_idx+1} LLM streaming failed: {stream_err}")
+                    _err_data = {"error": f"LLM error: {stream_err}"}
+                    yield _ev("tool_result", {"tool_result": {
+                        "success": False, "result": _err_data,
+                        "tool": "step_error", "step": step_idx + 1,
+                    }})
+                    plan_state["all_results"].append({
+                        "step": step_idx + 1, "tool": "step_error",
+                        "success": False, "result": _err_data,
+                    })
+                    history.append(AIMessage(content=f"Step {step_idx+1} failed: {stream_err}"))
+                    step_done = True
+                    break  # exit iteration loop, proceed to next step
 
                 # Model-type-specific parsing
                 parse_result = parse_step_output(full_response, behavior)
@@ -570,15 +672,26 @@ class ChatHandler:
                                 "status": "running",
                             }
                         })
-                        exec_args = dict(tc.arguments)
-                        if tc.name == "code_gen":
-                            exec_args["context"] = self._build_code_gen_context(
-                                step, step_idx, conv_id
+
+                        # Biomni tool direct execution
+                        if tc.name.startswith("biomni."):
+                            result = await self._execute_biomni_tool(
+                                tc.name, tc.arguments, conv_id, step_idx
                             )
-                        result = await tool_service.execute_tool(
-                            tc.name, exec_args,
-                            conv_id=conv_id, step_id=str(step_idx),
-                        )
+                        else:
+                            exec_args = dict(tc.arguments)
+                            if tc.name == "code_gen":
+                                exec_args["context"] = self._build_code_gen_context(
+                                    step, step_idx, conv_id
+                                )
+                            try:
+                                result = await tool_service.execute_tool(
+                                    tc.name, exec_args,
+                                    conv_id=conv_id, step_id=str(step_idx),
+                                )
+                            except Exception as tool_err:
+                                logger.error(f"Tool {tc.name} execution failed: {tool_err}")
+                                result = {"success": False, "error": str(tool_err)}
                         yield _ev("tool_result", {
                             "tool_result": {
                                 "success": result.get("success", False),
@@ -658,11 +771,18 @@ class ChatHandler:
 
                 elif parse_result.has_solution:
                     # Solution without execute
+                    _result_data = {"solution": parse_result.solution_text}
+                    yield _ev("tool_result", {"tool_result": {
+                        "success": True,
+                        "result": _result_data,
+                        "tool": "solution",
+                        "step": step_idx + 1,
+                    }})
                     plan_state["all_results"].append({
                         "step": step_idx + 1,
                         "tool": "solution",
                         "success": True,
-                        "result": {"solution": parse_result.solution_text},
+                        "result": _result_data,
                     })
                     history.append(AIMessage(content=full_response))
                     step_done = True
@@ -677,11 +797,18 @@ class ChatHandler:
                         ]
                         continue
                     # Text fallback
+                    _result_data = {"text": full_response}
+                    yield _ev("tool_result", {"tool_result": {
+                        "success": True,
+                        "result": _result_data,
+                        "tool": "text_fallback",
+                        "step": step_idx + 1,
+                    }})
                     plan_state["all_results"].append({
                         "step": step_idx + 1,
                         "tool": "text_fallback",
                         "success": True,
-                        "result": {"text": full_response},
+                        "result": _result_data,
                     })
                     history.append(AIMessage(content=full_response))
                     step_done = True
@@ -689,11 +816,18 @@ class ChatHandler:
 
             if not step_done:
                 # Max iterations reached without completion
+                _error_data = {"error": "Max iterations reached"}
+                yield _ev("tool_result", {"tool_result": {
+                    "success": False,
+                    "result": _error_data,
+                    "tool": "text_fallback",
+                    "step": step_idx + 1,
+                }})
                 plan_state["all_results"].append({
                     "step": step_idx + 1,
                     "tool": "text_fallback",
                     "success": False,
-                    "result": {"error": "Max iterations reached"},
+                    "result": _error_data,
                 })
                 history.append(AIMessage(content=full_response))
 
@@ -723,18 +857,23 @@ class ChatHandler:
         return fixed
 
     @staticmethod
-    async def _get_max_context(db: AsyncSession) -> int:
-        """Read max_context from DB settings, default 32768."""
+    async def _get_max_context(db: AsyncSession, behavior: dict = None) -> int:
+        """Read max_context from DB settings, default 32768.
+        Cap at 10000 for Ministral models to prevent OOM/garbled output."""
+        base_ctx = 32768
         try:
             result = await db.execute(
                 select(Setting).where(Setting.key == "settings")
             )
             row = result.scalar_one_or_none()
             if row and row.value and "max_context" in row.value:
-                return row.value["max_context"]
+                base_ctx = row.value["max_context"]
         except Exception:
             pass
-        return 32768
+            
+        if behavior and "ministral" in behavior.get("local_path", "").lower():
+            return min(base_ctx, 10000)
+        return base_ctx
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:
@@ -817,12 +956,48 @@ class ChatHandler:
     # Internal — context builders
     # ═══════════════════════════════════════════
 
+    def _build_plan_checklist(self, conv_id: str) -> str:
+        """Build plan checklist with current step statuses for system prompt injection."""
+        plan_state = self._plan_states.get(conv_id)
+        if not plan_state:
+            return ""
+
+        steps = plan_state["steps"]
+        results = plan_state["all_results"]
+        current_step = plan_state.get("current_step", 0)
+        goal = plan_state.get("goal", "")
+
+        # Build result lookup: step_index → result
+        result_map: Dict[int, dict] = {}
+        for r in results:
+            idx = r.get("step")
+            if idx is not None:
+                result_map[idx - 1] = r  # step is 1-indexed in results
+
+        lines = [f"# Current Plan: {goal}", ""]
+        for i, step in enumerate(steps):
+            name = step.get("name", f"Step {i + 1}")
+            if i in result_map:
+                r = result_map[i]
+                if r.get("success"):
+                    lines.append(f"{i + 1}. [✓] {name} (completed)")
+                else:
+                    lines.append(f"{i + 1}. [✗] {name} (failed)")
+            elif i == current_step:
+                lines.append(f"{i + 1}. [→] {name} (current)")
+            else:
+                lines.append(f"{i + 1}. [ ] {name}")
+
+        return "\n".join(lines)
+
     def _build_step_context(
         self, step: dict, step_idx: int, prev_results: list
     ) -> str:
         """Build step execution context string.
 
         Ported from inference.py lines 3101-3108.
+        Previous results are no longer included here — they are provided
+        as a plan checklist in the system prompt instead.
         """
         name = step.get("name", f"Step {step_idx + 1}")
         desc = step.get("description", "")
@@ -839,19 +1014,73 @@ class ChatHandler:
         else:
             parts.append("Choose and call the appropriate tool(s).")
 
-        # Add previous results summary
-        if prev_results:
-            summary_lines = []
-            for r in prev_results:
-                tool = r.get("tool", "unknown")
-                success = r.get("success", False)
-                summary_lines.append(
-                    f"  Step {r.get('step', '?')}: {tool} - "
-                    f"{'success' if success else 'failed'}"
-                )
-            parts.append("\nPrevious step results:\n" + "\n".join(summary_lines))
-
         return " ".join(parts[:3]) + ("\n" + "\n".join(parts[3:]) if len(parts) > 3 else "")
+
+    async def _execute_biomni_tool(
+        self, dotted_name: str, arguments: dict, conv_id: str, step_idx: int,
+    ) -> dict:
+        """Execute a Biomni tool call directly via CodeExecutor.
+
+        Converts biomni.tool.module.func_name + arguments into executable Python
+        code, runs it, and returns the result.
+
+        Example:
+          biomni.tool.literature.query_pubmed + {"query": "BRCA1", "lang": "en"}
+          →  from biomni.tool.literature import query_pubmed
+             result = query_pubmed(query="BRCA1", lang="en")
+             print(result)
+        """
+        from tools.code_executor import CodeExecutor
+
+        parts = dotted_name.split(".")
+        func_name = parts[-1]
+        module_path = ".".join(parts[:-1])  # e.g. biomni.tool.literature
+
+        # Build Python code from arguments
+        args_parts = []
+        for k, v in arguments.items():
+            if isinstance(v, str):
+                args_parts.append(f'{k}="{v}"')
+            else:
+                args_parts.append(f"{k}={v!r}")
+        args_str = ", ".join(args_parts)
+
+        code = (
+            f"from {module_path} import {func_name}\n"
+            f"result = {func_name}({args_str})\n"
+            f"print(result)"
+        )
+
+        logger.info(f"[biomni_tool] Executing {dotted_name}({args_str})")
+
+        executor = CodeExecutor()
+        try:
+            exec_result = await executor.execute(
+                code=code, language="python",
+                conv_id=conv_id, step_id=str(step_idx),
+            )
+            success = exec_result.return_code == 0
+            result = {
+                "success": success,
+                "result": {
+                    "stdout": exec_result.stdout or "",
+                    "stderr": exec_result.stderr or "",
+                    "code": code,
+                    "tool_name": dotted_name,
+                    "figures": getattr(exec_result, "figures", []) or [],
+                    "tables": getattr(exec_result, "tables", []) or [],
+                },
+            }
+            if not success:
+                result["error"] = exec_result.stderr[:500] if exec_result.stderr else "Unknown error"
+            logger.info(
+                f"[biomni_tool] {dotted_name} {'OK' if success else 'FAIL'}: "
+                f"stdout={len(exec_result.stdout or '')}c"
+            )
+            return result
+        except Exception as e:
+            logger.error(f"[biomni_tool] {dotted_name} execution error: {e}")
+            return {"success": False, "error": str(e), "result": None}
 
     def _build_code_gen_context(
         self, step: dict, step_idx: int, conv_id: str
@@ -878,6 +1107,11 @@ class ChatHandler:
         # Data directory
         data_dir = f"{settings.OUTPUTS_DIR}/{conv_id}"
         parts.append(f"Output directory: {data_dir}")
+
+        # Retrieved Biomni tool descriptions (from tool retrieval)
+        retrieved_desc = plan_state.get("_retrieved_tool_desc", "")
+        if retrieved_desc:
+            parts.append(f"Available Biomni functions:\n{retrieved_desc}")
 
         return "\n".join(parts)
 

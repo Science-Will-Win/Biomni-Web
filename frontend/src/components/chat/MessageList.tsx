@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { ArrowDown } from 'lucide-react';
+
 import { useChatContext } from '@/context/ChatContext';
 import { useSmartScroll } from '@/hooks/useSmartScroll';
 import { useWebSocket } from '@/context/WebSocketContext';
@@ -49,12 +49,13 @@ export function MessageList() {
         />
       ))}
 
-      {/* Scroll to bottom button */}
-      {showScrollButton && (
-        <button className="scroll-to-bottom-btn" onClick={scrollToBottom}>
-          <ArrowDown size={18} />
-        </button>
-      )}
+      {/* Scroll to bottom button — always rendered, CSS .visible controls opacity */}
+      <button
+        className={`scroll-to-bottom-btn${showScrollButton ? ' visible' : ''}`}
+        onClick={scrollToBottom}
+      >
+        ⌄
+      </button>
     </div>
   );
 }

@@ -45,7 +45,7 @@ export function ConnectionStatus() {
       <span className={`connection-dot ${allOk ? 'ok' : 'error'}`} />
       {!allOk && (
         <span className="connection-label">
-          {issues.join(', ')} disconnected
+          {issues.join(', ')}
         </span>
       )}
       {showTooltip && (

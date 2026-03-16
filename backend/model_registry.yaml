@@ -31,6 +31,7 @@ models:
     provider: sglang
     local_path: "Ministral-3-3B-Reasoning-2512"
     use_code_gen: true
+    use_llm_retrieval: true
     think_format: "[THINK]"
     code_execute_format: "[EXECUTE]"
     code_result_format: "[OBSERVATION]"

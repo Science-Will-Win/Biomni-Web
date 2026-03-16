@@ -1,5 +1,5 @@
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from 'react';
-import type { ModelInfo, DetailPanelData, PlanStep, PlanStepResult } from '@/types';
+import type { ModelInfo, DetailPanelData, PlanStep, PlanStepResult, CodeData } from '@/types';
 
 // ─── Modal Types ───
 
@@ -48,12 +48,13 @@ export type AppAction =
   | { type: 'SET_ACTIVE_DETAIL_TAB'; payload: AppState['activeDetailTab'] }
   | { type: 'UPDATE_STEP_STATUS'; payload: { stepIndex: number; status: PlanStep['status'] } }
   | { type: 'ADD_STEP_RESULT'; payload: PlanStepResult }
-  | { type: 'SET_STEP_CODE'; payload: { stepIndex: number; code: string } }
+  | { type: 'SET_STEP_CODE'; payload: { stepIndex: number; code: string; language?: string; execution?: Record<string, unknown>; fixAttempts?: number } }
   | { type: 'SET_ANALYSIS'; payload: string }
   | { type: 'SET_CURRENT_STEP'; payload: number }
   | { type: 'UPDATE_STEP_TOOL'; payload: { stepIndex: number; toolName: string } }
   | { type: 'RESET_STEP_RESULTS' }
   | { type: 'MARK_RUNNING_STEPS_ERROR' }
+  | { type: 'COMPLETE_PREVIOUS_RUNNING_STEPS'; payload: number }
   | { type: 'OPEN_MODAL'; payload: ModalType }
   | { type: 'CLOSE_MODAL' }
   | { type: 'BUMP_CONVERSATIONS' };
@@ -124,13 +125,17 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'SET_STEP_CODE': {
       if (!state.detailPanelData) return state;
+      const { stepIndex, code, language, execution, fixAttempts } = action.payload;
+      const value: string | CodeData = language
+        ? { code, language, execution, fixAttempts: fixAttempts || 0, stepIndex }
+        : code;
       return {
         ...state,
         detailPanelData: {
           ...state.detailPanelData,
           codes: {
             ...state.detailPanelData.codes,
-            [action.payload.stepIndex]: action.payload.code,
+            [stepIndex]: value,
           },
         },
       };
@@ -196,6 +201,20 @@ function appReducer(state: AppState, action: AppAction): AppState {
             s.status === 'running' ? { ...s, status: 'error' as const } : s
           ),
         },
+      };
+    }
+
+    case 'COMPLETE_PREVIOUS_RUNNING_STEPS': {
+      if (!state.detailPanelData) return state;
+      const cutoff = action.payload; // 0-indexed: all steps before this index
+      const steps = state.detailPanelData.steps.map((s, i) =>
+        i < cutoff && s.status === 'running'
+          ? { ...s, status: 'completed' as const }
+          : s
+      );
+      return {
+        ...state,
+        detailPanelData: { ...state.detailPanelData, steps },
       };
     }
 

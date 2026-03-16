@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { ChevronDown, Trash2 } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { useAppContext } from '@/context/AppContext';
-import { useChatContext } from '@/context/ChatContext';
 import { getCurrentModel, listModels, switchModel } from '@/api/models';
 import { useTranslation } from '@/i18n';
 import { MODEL_REGISTRY } from '@/config/models';
@@ -9,7 +8,6 @@ import type { ModelInfo } from '@/types';
 
 export function ChatHeader() {
   const { state, dispatch } = useAppContext();
-  const { state: chatState, dispatch: chatDispatch } = useChatContext();
   const { t } = useTranslation();
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -78,12 +76,6 @@ export function ChatHeader() {
     } finally {
       setSwitching(false);
     }
-  };
-
-  const handleClearChat = () => {
-    if (chatState.messages.length === 0) return;
-    chatDispatch({ type: 'CLEAR_MESSAGES' });
-    dispatch({ type: 'CLEAR_DETAIL_PANEL' });
   };
 
   const localModels = models.filter((m) => m.type === 'local');
@@ -155,14 +147,6 @@ export function ChatHeader() {
           )}
         </div>
       </div>
-      <button
-        className="header-icon-btn"
-        onClick={handleClearChat}
-        disabled={chatState.messages.length === 0}
-        title={t('tooltip.clear_chat')}
-      >
-        <Trash2 size={16} />
-      </button>
     </header>
   );
 }

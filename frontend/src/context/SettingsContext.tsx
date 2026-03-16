@@ -40,6 +40,7 @@ export interface SettingsState {
   refusalTempDecay: number;
   refusalMinTemp: number;
   refusalRecoveryTokens: number;
+  useCompactPrompt: boolean;
   // localStorage-only
   theme: string;
   language: string;
@@ -62,6 +63,7 @@ const getInitialSettings = (): SettingsState => ({
   refusalTempDecay: 0.7,
   refusalMinTemp: 0.3,
   refusalRecoveryTokens: 50,
+  useCompactPrompt: false,
   theme: localStorage.getItem('ui_theme') || 'soft-minimal',
   language: localStorage.getItem('ui_language') || detectBrowserLanguage(),
   userName: localStorage.getItem('user_name') || '',
@@ -172,6 +174,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
             refusalTempDecay: res.refusal_temp_decay,
             refusalMinTemp: res.refusal_min_temp,
             refusalRecoveryTokens: res.refusal_recovery_tokens,
+            useCompactPrompt: res.use_compact_prompt,
           },
         });
         dispatch({ type: 'SET_LOADED' });

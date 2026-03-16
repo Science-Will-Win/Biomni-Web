@@ -128,6 +128,8 @@ class SettingsResponse(BaseModel):
     refusal_temp_decay: float = 0.7
     refusal_min_temp: float = 0.3
     refusal_recovery_tokens: int = 50
+    # Prompt options
+    use_compact_prompt: bool = False
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -143,6 +145,8 @@ class SettingsUpdateRequest(BaseModel):
     refusal_temp_decay: Optional[float] = None
     refusal_min_temp: Optional[float] = None
     refusal_recovery_tokens: Optional[int] = None
+    # Prompt options
+    use_compact_prompt: Optional[bool] = None
 
 
 class SystemPromptResponse(BaseModel):
