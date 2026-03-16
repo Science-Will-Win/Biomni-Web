@@ -3,15 +3,26 @@
 import os
 import sys
 import logging
+import asyncio
+import time        # [추가] time.sleep() 용도
+import json        # [추가] json.dumps() 용도
+import requests    # [추가] requests.get() 용도
+from typing import Dict, List, Any  # [추가] List, Any 추가
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException  # [추가] HTTPException 추가
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
-import asyncio
+from pydantic import BaseModel  # [추가] ChatRequest, ChatResponse 용도
+
 from dotenv import load_dotenv
+from biomni.agent import A1
+
+# [추가] Langfuse & Langchain 관련 도구들
+from langfuse.decorators import observe, langfuse_context
+from langchain_core.messages import HumanMessage
 
 # Load environment variables
 load_dotenv(dotenv_path="../.env")
@@ -332,6 +343,7 @@ async def delete_session(session_id: str):
     return {"status": "not_found"}
 
 @app.post("/api/chat_stream")
+@observe(name="Biomni Stream Interaction") # 👈 1. 데코레이터 추가!
 async def chat_stream_endpoint(request: ChatRequest):
     # 환경변수 실시간 갱신 및 에이전트 할당
     load_dotenv(dotenv_path="../.env", override=True)
@@ -341,8 +353,17 @@ async def chat_stream_endpoint(request: ChatRequest):
     
     async def event_generator():
         inputs = {"messages": [HumanMessage(content=request.message)], "next_step": None}
-        config = {"recursion_limit": 500, "configurable": {"thread_id": request.session_id}}
         
+        # 👈 2. Langfuse 핸들러 가져오기
+        langfuse_handler = langfuse_context.get_current_langchain_handler() 
+        
+        # 👈 3. config의 callbacks에 핸들러 주입!
+        config = {
+            "recursion_limit": 500, 
+            "configurable": {"thread_id": request.session_id},
+            "callbacks": [langfuse_handler] 
+        }
+    
         try:
             # LangGraph의 astream을 사용하여 각 노드(plan, generate, execute) 실행이 끝날 때마다 결과 획득
             async for event in current_agent.app.astream(inputs, stream_mode="updates", config=config):
@@ -370,6 +391,10 @@ async def chat_stream_endpoint(request: ChatRequest):
         except Exception as e:
             logger.error(f"Stream error: {e}")
             yield f"data: {json.dumps({'node': 'ERROR', 'content': f'Error: {str(e)}'})}\n\n"
+
+        finally:
+            logger.info("Flushing Langfuse data...")
+            langfuse_context.flush()
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

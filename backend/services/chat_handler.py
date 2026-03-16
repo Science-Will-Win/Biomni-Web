@@ -30,11 +30,23 @@ from services.prompt_builder import PromptMode, build_prompt
 from services.tool_service import ToolService
 from tools.tool_parser import parse_step_output
 
+from langfuse import Langfuse
+from langfuse.callback import CallbackHandler
+
 logger = logging.getLogger("aigen.chat_handler")
 
 MAX_TOOL_ITERATIONS = 10
 MAX_RETRY_ATTEMPTS = 3
 
+def get_langfuse_client() -> Optional[Langfuse]:
+    settings = get_settings()
+    if settings.LANGFUSE_PUBLIC_KEY and settings.LANGFUSE_SECRET_KEY:
+        return Langfuse(
+            public_key=settings.LANGFUSE_PUBLIC_KEY,
+            secret_key=settings.LANGFUSE_SECRET_KEY,
+            host=settings.LANGFUSE_HOST
+        )
+    return None
 
 def _ev(event_type: str, data: Dict[str, Any]) -> ChatEvent:
     """Shortcut to create a ChatEvent."""
@@ -526,6 +538,8 @@ class ChatHandler:
         steps = plan_state["steps"]
         uses_tool_calls = bool(behavior.get("tool_calls_format"))
 
+        langfuse_client = get_langfuse_client()
+
         for step_idx in range(plan_state["current_step"], len(steps)):
             if self._stop_flags.get(conv_id):
                 await self._save_plan_complete(conv_id, conv_svc, stopped=True)
@@ -536,6 +550,17 @@ class ChatHandler:
             plan_state["current_step"] = step_idx
 
             llm = await llm_service.get_llm_instance(db=db)
+
+            trace = None
+            lf_handler = None
+            if langfuse_client:
+                trace = langfuse_client.trace(
+                    name=f"Step Execution: {step.get('name', f'Step {step_idx+1}')}",
+                    session_id=str(conv_id), # 채팅창의 ID를 session_id로 공유
+                    tags=["biomni_step"]
+                )
+                # LLM 생성을 추적하기 위한 Langchain 핸들러 생성
+                lf_handler = trace.get_langchain_handler()
 
             # ── Build prompt: Biomni full prompt + plan checklist ──
             app_settings = get_settings()
@@ -550,20 +575,37 @@ class ChatHandler:
             if biomni_loader.is_initialized():
                 step_query = step.get("description", step.get("name", ""))
                 use_llm_ret = behavior.get("use_llm_retrieval", False)
-                if use_llm_ret:
-                    retrieval_llm = await llm_service.get_llm_instance(db=db)
-                    selected_tools = await biomni_loader.retrieval_with_llm(
-                        step_query, retrieval_llm, max_tools=15,
+
+                retrieval_span = None
+                if trace:
+                    retrieval_span = trace.span(
+                        name="Tool Retrieval",
+                        input={"query": step_query, "use_llm": use_llm_ret}
                     )
-                    logger.info(f"Tool retrieval (LLM): step {step_idx+1}")
-                else:
-                    selected_tools = biomni_loader.keyword_search(
-                        step_query, max_results=15,
-                    )
-                    logger.info(f"Tool retrieval (keyword): step {step_idx+1}")
-                tool_desc = biomni_loader.format_tool_desc(selected_tools)
-                retrieved_tool_names = [t.get("name", "?") for t in selected_tools]
-                logger.info(f"  → {len(retrieved_tool_names)} tools: {retrieved_tool_names[:5]}")
+
+                try:
+                    if use_llm_ret:
+                        retrieval_llm = await llm_service.get_llm_instance(db=db)
+                        selected_tools = await biomni_loader.retrieval_with_llm(
+                            step_query, retrieval_llm, max_tools=15,
+                        )
+                    else:
+                        selected_tools = biomni_loader.keyword_search(
+                            step_query, max_results=15,
+                        )
+                        
+                    tool_desc = biomni_loader.format_tool_desc(selected_tools)
+                    retrieved_tool_names = [t.get("name", "?") for t in selected_tools]
+                    
+                    # [추가] 정상 종료 시 Span 기록
+                    if retrieval_span:
+                        retrieval_span.end(output={"retrieved_tools": retrieved_tool_names})
+                        
+                except Exception as e:
+                    # [추가] 에러 발생 시 Span에 Error 기록
+                    if retrieval_span:
+                        retrieval_span.end(level="ERROR", status_message=str(e))
+                    raise
             else:
                 tool_desc = tool_service.generate_tools_description()
                 retrieved_tool_names = []
@@ -634,6 +676,7 @@ class ChatHandler:
 
                 full_response = ""
                 try:
+                    run_config = {"callbacks": [lf_handler]} if lf_handler else {}
                     async for chunk in llm.astream(step_messages):
                         if self._stop_flags.get(conv_id):
                             await self._save_plan_complete(conv_id, conv_svc, stopped=True)
@@ -673,6 +716,13 @@ class ChatHandler:
                             }
                         })
 
+                        tool_span = None
+                        if trace:
+                            tool_span = trace.span(
+                                name=f"Tool Execution: {tc.name}",
+                                input=tc.arguments
+                            )
+
                         # Biomni tool direct execution
                         if tc.name.startswith("biomni."):
                             result = await self._execute_biomni_tool(
@@ -692,6 +742,15 @@ class ChatHandler:
                             except Exception as tool_err:
                                 logger.error(f"Tool {tc.name} execution failed: {tool_err}")
                                 result = {"success": False, "error": str(tool_err)}
+
+                        if tool_span:
+                            # 성공 여부에 따라 에러 레벨 지정
+                            level = "DEFAULT" if result.get("success", False) else "ERROR"
+                            tool_span.end(
+                                output=result,
+                                level=level
+                            )
+
                         yield _ev("tool_result", {
                             "tool_result": {
                                 "success": result.get("success", False),
@@ -734,10 +793,28 @@ class ChatHandler:
                         tool_label = used_tools[0] if used_tools else "code_gen"
                         last_tool_label = tool_label
 
+                        code_span = None
+                        if trace:
+                            code_span = trace.span(
+                                name="Run Sandbox Code",
+                                input={"code": block.code, "language": block.language, "tool": tool_label}
+                            )
+
                         exec_result = await code_executor.execute(
                             block.code, block.language,
                             conv_id=conv_id, step_id=str(step_idx),
                         )
+
+                        if code_span:
+                            code_span.end(
+                                output={
+                                    "stdout": exec_result.stdout,
+                                    "stderr": exec_result.stderr,
+                                    "success": exec_result.success
+                                },
+                                level="ERROR" if not exec_result.success else "DEFAULT"
+                            )
+
                         obs = self._format_observation(exec_result, behavior)
                         yield _ev("tool_result", {
                             "tool_result": {
