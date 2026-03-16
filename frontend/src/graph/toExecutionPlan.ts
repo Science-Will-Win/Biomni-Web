@@ -11,8 +11,18 @@ export interface ExecutionStep {
   tool: string;
   description: string;
   depends_on: string[];
+  // Semantic ref fields (ref connections, categorized by source node type)
+  refTools?: { name: string; params?: Record<string, unknown> }[];
+  refDataLake?: { name: string; description: string }[];
+  refLibraries?: { name: string; description: string }[];
+  refSteps?: { stepId: string; name: string }[];
   references?: { nodeId: string; title: string; nodeType: string; portValues?: Record<string, unknown> }[];
+  // Semantic flow fields (flow connections from dataOnly nodes)
+  flowLibraries?: { name: string; description: string }[];
+  flowData?: { name: string; description: string }[];
   inputs?: Record<string, { nodeType: string; title: string; portValues?: Record<string, unknown> }>;
+  portValues?: Record<string, unknown>;
+  toolParams?: Record<string, unknown>;
 }
 
 export interface ExecutionPlan {
@@ -51,7 +61,7 @@ export function toExecutionPlan(
   // Detect Tool Nodes connected to Step Nodes via flow
   // Tool Node → Step means "use this tool for this step"
   const toolNodeParentOf = new Map<string, string>(); // toolNodeId → stepNodeId
-  const stepToolAssignment = new Map<string, string>(); // stepNodeId → tool name
+  const stepToolAssignment = new Map<string, { tool: string; portValues?: Record<string, unknown> }>(); // stepNodeId → tool info
   for (const conn of connections.values()) {
     if (conn.type !== 'flow') continue;
     const fromNode = nodes.get(conn.from);
@@ -63,7 +73,7 @@ export function toExecutionPlan(
       toolNodeParentOf.set(fromNode.id, toNode.id);
       const toolName = fromNode.tool || fromDef.defaultConfig?.tool || '';
       if (toolName) {
-        stepToolAssignment.set(toNode.id, toolName);
+        stepToolAssignment.set(toNode.id, { tool: toolName, portValues: fromNode.portValues });
       }
     }
   }
@@ -76,6 +86,7 @@ export function toExecutionPlan(
     if (toolNodeParentOf.has(node.id)) continue; // Exclude Tool Nodes acting as tool providers
     const def = getNodeDef(node.type);
     if (def?.dataOnly) continue;
+    if (def?.result) continue; // result 노드 (observe, save, visualize, table) 제외
     if (excludeResult && node.type === 'analyze') continue;
     candidateIds.add(node.id);
   }
@@ -118,6 +129,10 @@ export function toExecutionPlan(
     }
   }
 
+  if (sorted.length < candidateIds.size) {
+    console.warn(`Cycle detected in graph — ${candidateIds.size - sorted.length} node(s) excluded from execution plan`);
+  }
+
   // Assign numbering
   const numbering = new Map<string, string>();
   let mainCounter = 0;
@@ -143,49 +158,136 @@ export function toExecutionPlan(
     }
   }
 
-  // Build steps
+  // Build steps with semantic connection classification
   const steps: ExecutionStep[] = sorted.map(nodeId => {
     const node = nodes.get(nodeId)!;
-    const refs: ExecutionStep['references'] = [];
+    const refs: NonNullable<ExecutionStep['references']> = [];
+    const refTools: { name: string; params?: Record<string, unknown> }[] = [];
+    const refDataLake: { name: string; description: string }[] = [];
+    const refLibraries: { name: string; description: string }[] = [];
+    const refSteps: { stepId: string; name: string }[] = [];
+    const flowLibraries: { name: string; description: string }[] = [];
+    const flowData: { name: string; description: string }[] = [];
     const inputs: Record<string, { nodeType: string; title: string; portValues?: Record<string, unknown> }> = {};
 
     for (const conn of connections.values()) {
+      // --- ref connections: categorize by source node type ---
       if (conn.type === 'ref' && conn.to === nodeId) {
         const refNode = nodes.get(conn.from);
-        if (refNode) {
+        if (!refNode) continue;
+        const refDef = getNodeDef(refNode.type);
+        if (refDef?.category === 'Tool') {
+          const toolName = refNode.tool || refDef.defaultConfig?.tool || refNode.title;
+          refTools.push({ name: toolName, params: refNode.portValues });
+        } else if (refNode.type === 'data' || refNode.type.startsWith('dl_')) {
+          const desc = refNode.portValues?.out;
+          const descStr = typeof desc === 'object' && desc
+            ? (desc as { fileName?: string }).fileName || ''
+            : String(desc || '');
+          refDataLake.push({ name: refNode.title, description: descStr });
+        } else if (refNode.type === 'library' || refNode.type.startsWith('lib_')) {
+          refLibraries.push({ name: refNode.title, description: String(refNode.portValues?.out || '') });
+        } else if (refNode.type === 'step' || refNode.type === 'composite') {
+          const refStepNum = numbering.get(refNode.id) || '';
+          refSteps.push({ stepId: refStepNum, name: refNode.title });
+        } else {
           refs.push({ nodeId: refNode.id, title: refNode.title, nodeType: refNode.type, portValues: refNode.portValues });
         }
       }
+      // --- flow connections: categorize dataOnly source nodes ---
       if (conn.type === 'flow' && conn.to === nodeId) {
         const parentNode = nodes.get(conn.from);
-        if (parentNode) {
-          const parentDef = getNodeDef(parentNode.type);
-          if (parentDef?.dataOnly) {
-            inputs[conn.toPort || 'in'] = { nodeType: parentNode.type, title: parentNode.title, portValues: parentNode.portValues };
-          }
+        if (!parentNode) continue;
+        const parentDef = getNodeDef(parentNode.type);
+        if (!parentDef?.dataOnly) continue;
+        if (parentNode.type === 'library' || parentNode.type.startsWith('lib_')) {
+          flowLibraries.push({ name: parentNode.title, description: String(parentNode.portValues?.out || '') });
+        } else if (parentNode.type === 'data' || parentNode.type.startsWith('dl_')) {
+          const desc = parentNode.portValues?.out;
+          const descStr = typeof desc === 'object' && desc
+            ? (desc as { fileName?: string }).fileName || ''
+            : String(desc || '');
+          flowData.push({ name: parentNode.title, description: descStr });
+        } else {
+          inputs[conn.toPort || 'in'] = { nodeType: parentNode.type, title: parentNode.title, portValues: parentNode.portValues };
         }
       }
     }
 
     // Tool Node connection overrides node's own tool
-    const assignedTool = stepToolAssignment.get(nodeId) || node.tool || '';
+    const assigned = stepToolAssignment.get(nodeId);
+    const toolName = assigned?.tool || node.tool || '';
+    const toolParams = assigned?.portValues;
     const step: ExecutionStep = {
       id: numbering.get(nodeId) || '',
       name: node.title,
-      tool: assignedTool,
+      tool: toolName,
       description: node.description || '',
       depends_on: (filteredParents.get(nodeId) || []).map(pid => numbering.get(pid) || ''),
     };
+    if (toolParams && Object.keys(toolParams).length > 0) step.toolParams = toolParams;
+    if (refTools.length > 0) step.refTools = refTools;
+    if (refDataLake.length > 0) step.refDataLake = refDataLake;
+    if (refLibraries.length > 0) step.refLibraries = refLibraries;
+    if (refSteps.length > 0) step.refSteps = refSteps;
     if (refs.length > 0) step.references = refs;
+    if (flowLibraries.length > 0) step.flowLibraries = flowLibraries;
+    if (flowData.length > 0) step.flowData = flowData;
     if (Object.keys(inputs).length > 0) step.inputs = inputs;
+    if (node.portValues && Object.keys(node.portValues).length > 0) step.portValues = node.portValues;
     return step;
   });
 
-  return { goal: '', steps };
+  // Extract goal from prompt input node (string type, typically id 'prompt-input')
+  let goal = '';
+  for (const node of nodes.values()) {
+    if (node.type === 'string' && node.portValues?.out) {
+      goal = String(node.portValues.out);
+      break;
+    }
+  }
+
+  return { goal, steps };
 }
 
 export function getExecutionPlanHash(nodes: Map<string, NodeData>, connections: Map<string, ConnectionData>): string | null {
   const plan = toExecutionPlan(nodes, connections, { excludeResult: true });
   if (!plan || plan.steps.length === 0) return null;
   return plan.steps.map(s => `${s.id}:${s.tool}:${s.name}`).join('|');
+}
+
+/**
+ * Check if the graph has a valid prompt→analysis flow path.
+ * Required for "Start from Graph" — at least one flow connection path
+ * must exist from a prompt node (type: 'string') to the analysis node (id: 'analysis-node').
+ */
+export function canStartFromGraph(
+  nodes: Map<string, NodeData>,
+  connections: Map<string, ConnectionData>,
+): boolean {
+  let promptId: string | null = null;
+  let analysisId: string | null = null;
+  for (const node of nodes.values()) {
+    if (node.type === 'string') promptId = node.id;
+    if (node.id === 'analysis-node') analysisId = node.id;
+  }
+  if (!promptId || !analysisId) return false;
+
+  // BFS from prompt to analysis via flow connections only
+  const adj = new Map<string, string[]>();
+  for (const conn of connections.values()) {
+    if (conn.type !== 'flow') continue;
+    if (!adj.has(conn.from)) adj.set(conn.from, []);
+    adj.get(conn.from)!.push(conn.to);
+  }
+  const visited = new Set<string>();
+  const queue = [promptId];
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    if (cur === analysisId) return true;
+    if (visited.has(cur)) continue;
+    visited.add(cur);
+    for (const next of (adj.get(cur) || [])) queue.push(next);
+  }
+  return false;
 }

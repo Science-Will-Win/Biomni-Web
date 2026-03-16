@@ -21,11 +21,11 @@ else
     echo "  ❌ biomni-web-aigen-backend 이미지 없음 (빌드 필요)"
 fi
 
-if docker images --format "{{.Repository}}" 2>/dev/null | grep -q "sglang"; then
-    echo "  ✅ SGLang 이미지 존재"
-    docker images --format "  {{.Repository}}:{{.Tag}} - {{.Size}}" lmsysorg/sglang
+if docker images --format "{{.Repository}}" 2>/dev/null | grep -q "vllm"; then
+    echo "  ✅ vLLM 이미지 존재"
+    docker images --format "  {{.Repository}}:{{.Tag}} - {{.Size}}" vllm/vllm-openai
 else
-    echo "  ❌ SGLang 이미지 없음"
+    echo "  ❌ vLLM 이미지 없음"
 fi
 
 echo ""
@@ -45,7 +45,7 @@ fi
 # 빌드 중인 컨테이너 확인
 echo ""
 echo "🔨 [빌드 상태]"
-BUILD_CONTAINERS=$(docker ps -a --filter "status=running" --format "{{.ID}} {{.Image}} {{.Status}}" 2>/dev/null | grep -v "sglang\|postgres\|aigen" | head -5)
+BUILD_CONTAINERS=$(docker ps -a --filter "status=running" --format "{{.ID}} {{.Image}} {{.Status}}" 2>/dev/null | grep -v "vllm\|postgres\|aigen" | head -5)
 if [ -n "$BUILD_CONTAINERS" ]; then
     echo "  🔄 빌드 컨테이너 실행 중:"
     docker ps -a --filter "status=running" --format "  {{.ID}} | {{.Image}} | {{.Status}}" 2>/dev/null
@@ -64,12 +64,12 @@ fi
 echo ""
 echo "🌐 [포트 상태]"
 
-# SGLang (30000)
+# vLLM (30000)
 if curl -s --connect-timeout 2 http://localhost:30000/v1/models > /dev/null 2>&1; then
     MODELS=$(curl -s --connect-timeout 2 http://localhost:30000/v1/models 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'][0]['id'])" 2>/dev/null || echo "unknown")
-    echo "  ✅ SGLang (30000) - 모델: $MODELS"
+    echo "  ✅ vLLM (30000) - 모델: $MODELS"
 else
-    echo "  ❌ SGLang (30000) - 응답 없음"
+    echo "  ❌ vLLM (30000) - 응답 없음"
 fi
 
 # Backend (8003)
@@ -115,8 +115,8 @@ if ! docker images --format "{{.Repository}}" 2>/dev/null | grep -q "biomni-web-
     echo "     → docker images | grep biomni 로 확인"
 fi
 if ! curl -s --connect-timeout 1 http://localhost:30000/v1/models > /dev/null 2>&1; then
-    echo "  2. SGLang 서버 시작"
-    echo "     → docker start sglang-server"
+    echo "  2. vLLM 서버 시작"
+    echo "     → docker start vllm-server"
 fi
 if ! curl -s --connect-timeout 1 http://localhost:8003/api/health > /dev/null 2>&1; then
     echo "  3. docker-compose up -d"

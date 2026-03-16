@@ -33,7 +33,6 @@ class PromptMode(str, Enum):
     FULL = "full"              # Step execution: A + B + C + D + E + F + G
     AGENT = "agent"            # Direct chat (no plan): A + C + D + E + F + G
     PLAN = "plan"
-    CODE_GEN = "code_gen"
     ANALYZE = "analyze"
 
 
@@ -89,7 +88,17 @@ SECTION_ROLE = _ROLE_BASE
 
 # ─── Section [B]: Plan rules ───
 
-SECTION_PLAN = """
+def _build_plan_section(token_format: Optional[Dict] = None) -> str:
+    """Build SECTION_PLAN with model-specific solution tag reference."""
+    tf = token_format or {}
+    sol_fmt = tf.get("solution_format")
+    if sol_fmt:
+        sol_close = _closing_tag(sol_fmt)
+        sol_warning = f"Do NOT use {sol_fmt} for individual steps — {sol_fmt}...{sol_close} is only for the final answer after ALL steps are complete."
+    else:
+        sol_warning = "Do NOT provide a final answer for individual steps — only provide the overall answer after ALL steps are complete."
+
+    return f"""
 Given a task, make a plan first. The plan should be a numbered list of steps that you will take to solve the task. Be specific and detailed.
 Format your plan as a checklist with empty checkboxes like this:
 1. [ ] First step
@@ -100,6 +109,8 @@ Follow the plan step by step. After completing each step, update the checklist b
 1. [✓] First step (completed)
 2. [ ] Second step
 3. [ ] Third step
+
+IMPORTANT: When you finish executing a step, you MUST mark it as [✓] in the checklist to signal step completion. {sol_warning}
 
 If a step fails or needs modification, mark it with an X and explain why:
 1. [✓] First step (completed)
@@ -114,29 +125,13 @@ At each turn, you should first provide your thinking and reasoning given the con
 IMPORTANT: DO NOT repeat the same words, phrases, or sentences. Each sentence must add new information. If you find yourself repeating, stop and move to the next point."""
 
 
+# Legacy constant (backward compat — uses default <solution> format)
+SECTION_PLAN = _build_plan_section()
+
+
 # ─── Section [B2]: Plan creation system prompt (structured output) ───
 # Forces LLM to output [TOOL_CALLS]create_plan[ARGS]{JSON} directly.
 # Ported from original prompts/PLAN_SYSTEM_PROMPT.txt
-
-SECTION_PLAN_SYSTEM = """You are a research planning assistant.
-
-# TASK
-Output a single line in this EXACT format — nothing else before or after:
-
-[TOOL_CALLS]create_plan[ARGS]{"goal": "...", "steps": [{"name": "...", "description": "..."}]}
-
-# RULES
-- goal: concise noun phrase (not a full sentence)
-- steps: 5-10 items, each with "name" and "description"
-- Write goal and steps in the SAME LANGUAGE as the user's message
-- Follow scientific method: Literature Review → Problem Definition → Method Design → Data Collection → Analysis → Conclusion
-- Each step must be distinct, no overlap
-- DO NOT output any text before or after the [TOOL_CALLS] line
-- DO NOT repeat words or phrases
-
-# EXAMPLE
-
-[TOOL_CALLS]create_plan[ARGS]{"goal": "Hepatotoxicity assessment of drug candidates", "steps": [{"name": "Literature review", "description": "Survey in vitro and in vivo models and biomarkers used for hepatotoxicity evaluation"}, {"name": "Experimental design", "description": "Design toxicity test protocols using HepG2 cell lines and primary hepatocytes"}, {"name": "Data collection and analysis", "description": "Collect cell viability, ALT/AST levels, and metabolite profiling data, then perform statistical analysis"}]}"""
 
 
 # ─── Section [C]: Code execution rules ───
@@ -148,7 +143,7 @@ def _build_code_exec_section(token_format: Optional[Dict] = None) -> str:
     exec_close = _closing_tag(exec_open)
     obs_open = tf.get("code_result_format", "<observation>")
     obs_close = _closing_tag(obs_open)
-    sol_fmt = tf.get("solution_format")
+    sol_fmt = tf.get("solution_format")  # None if model doesn't support solution tags
 
     # Build solution option if the model supports it
     sol_section = ""
@@ -181,52 +176,45 @@ Otherwise the system will not be able to know what has been done.
 For R code, use the #!R marker at the beginning of your code block to indicate it's R code.
 For Bash scripts and commands, use the #!BASH marker in your execute block for both simple commands and multi-line scripts with variables, loops, conditionals, loops, and other Bash features.
 
-In each response, you must include EITHER {exec_open}{sol_tag_ref} tag. Not both at the same time. Do not respond with messages without any tags. No empty messages."""
+In each response, you must include {exec_open}...{exec_close} to run code.
+When you have completed ALL code execution for the current step, mark it as [✓] in the checklist instead of using {exec_open}.
+{"For the FINAL step only, use " + sol_fmt + "..." + sol_close + " to provide the overall answer." if sol_fmt else ""}
+Do not respond with empty messages.
 
+CRITICAL: Every response MUST use {exec_open}...{exec_close} to execute code. Only use [✓] to mark a step complete AFTER all code execution is done. Do NOT skip code execution by marking [✓] directly. Do NOT write code as plain text or in markdown code blocks. ALWAYS wrap executable code inside {exec_open}...{exec_close} tags.
 
-# Keep legacy constant for backward compatibility
-SECTION_CODE_EXEC = _build_code_exec_section()
+CRITICAL: The {exec_open}...{exec_close} block must contain ONLY executable code. Do NOT include explanations, reasoning, or commentary inside the code block. Write your reasoning BEFORE the {exec_open} tag, then put ONLY the code inside.
 
+WRONG (reasoning mixed with code):
+{exec_open}
+Alright, I need to research gene functions. Let me import the module first.
+from biomni.genomics import get_gene_info
+result = get_gene_info("ATXN2")
+print(result)
+{exec_close}
 
-# ─── Section [C-extra]: Code gen subprocess environment (for code_gen mode only) ───
+CORRECT (reasoning before, only code inside):
+I need to research gene functions using the genomics module.
+{exec_open}
+from biomni.genomics import get_gene_info
+result = get_gene_info("ATXN2")
+print(result)
+{exec_close}
 
-SECTION_CODE_GEN_ENV = """
-# EXECUTION ENVIRONMENT
-- Your code runs in an **isolated subprocess** with NO shared memory.
-- You cannot access variables from previous steps directly.
-- A `results` dict is pre-loaded with previous step results, keyed by step number (int).
-  Example: `results[1]` contains step 1's output (dict with keys like 'title', 'details', 'summary', etc.)
-- A `_data_dir` variable contains the output directory path (string).
-- matplotlib is pre-imported and `plt.show()` is patched to auto-save figures.
-- The working directory is set to the output directory.
+WRONG (checklist inside code block — causes syntax error):
+{exec_open}
+result = analyze_data()
+print(result)
+1. [✓] Analysis complete
+{exec_close}
 
-# RULES
-- Only generate Python or R code
-- Output ONLY executable code, no markdown blocks
-- ALWAYS include top-level execution code. If you define functions, call them at the module level.
-  Do NOT define a `main()` function without calling it. Do NOT use `if __name__ == '__main__':` guards.
-  The code runs as a standalone script, so all functions must be explicitly invoked.
-- ALWAYS call `plt.show()` after creating any matplotlib/seaborn figure (do NOT rely on plt.savefig alone)
-- ALWAYS use `print()` to display important results, summaries, and computed values
-- Use standard libraries: pandas, numpy, scipy, matplotlib, seaborn
-- For bioinformatics: use biopython when appropriate
+CORRECT (checklist AFTER code block, not inside):
+{exec_open}
+result = analyze_data()
+print(result)
+{exec_close}
+1. [✓] Analysis complete"""
 
-# ERROR HANDLING
-- NEVER use bare `except:` or `except Exception: pass` to silence errors
-- Only catch specific, expected exceptions (e.g., `except FileNotFoundError:`)
-- Let unexpected errors propagate so they can be diagnosed and fixed
-- Do NOT wrap entire scripts in try-except blocks
-
-# DATA ACCESS
-- Use the `results` dict to access data from previous plan steps
-- If uploaded data files are referenced, read them with pandas (e.g., `pd.read_csv('/uploads/file.csv')`)
-- If specific data is not available, generate realistic synthetic/sample data and clearly label it as such
-- Print the data shape and column names when loading data files
-
-# CODE QUALITY
-- Add docstrings for functions
-- Use meaningful variable names
-- Print a summary of key findings at the end"""
 
 
 # ─── Section [D]: Protocol generation ───
@@ -242,88 +230,57 @@ SECTION_SELF_CRITIC = """
 You may or may not receive feedbacks from human. If so, address the feedbacks by following the same procedure of multiple rounds of thinking, execution, and then coming up with a new solution."""
 
 
-# ─── Section: code_gen tool guide (for use_code_gen models) ───
-
-SECTION_CODE_GEN_GUIDE = """\
-
-# HOW TO USE code_gen
-
-code_gen generates and executes code in a sandboxed environment. You describe WHAT the code should do in the `task` argument — another LLM will write and run the actual code.
-
-## TASK ARGUMENT GUIDELINES
-
-Write a detailed, specific task description. Include:
-- What data to load or generate
-- What analysis/processing to perform
-- What to print or visualize
-- Expected output format
-
-Good example:
-[TOOL_CALLS]code_gen[ARGS]{{"task": "Load the CSV file from /uploads/gene_expression.csv using pandas. Calculate mean expression per gene. Create a bar plot of the top 10 genes by mean expression. Print the top 10 gene names and values.", "language": "python"}}
-
-Bad example:
-[TOOL_CALLS]code_gen[ARGS]{{"task": "analyze data", "language": "python"}}
-
-## EXECUTION ENVIRONMENT
-
-- Code runs in an isolated subprocess with matplotlib, pandas, numpy, scipy, seaborn pre-installed
-- Previous step results are available via `results` dict (keyed by step number)
-- `plt.show()` auto-saves figures
-- Default language: python. Use "r" for R code.
-
-## RULES
-
-- Put ALL details in the `task` field — the code generator only sees your task description
-- For multi-part analysis, describe all parts in one task
-- Always request printing of key results and summaries"""
-
 
 # ─── Section: Plan-only creation rules (structured tool call output) ───
 
 def _build_plan_creation_section(token_format: Optional[Dict] = None) -> str:
-    """Build SECTION_PLAN_CREATION with model-specific think tags."""
+    """Build plan creation prompt with checklist format and model-specific think tags."""
     tf = token_format or {}
     think_fmt = tf.get("think_format", "<think>")
     think_close = _closing_tag(think_fmt)
 
-    return f"""
-You create research plans. Think carefully, then output a create_plan tool call.
+    return f"""You are Aigen R0, helpful biomedical assistant assigned with the task of problem-solving.
+You follow these instructions in all languages, and always respond to the user in the language they use or request.
+To achieve this, you will be using an interactive coding environment equipped with a variety of tool functions, data, and softwares to assist you throughout the process.
 
-# OUTPUT FORMAT
-
-[TOOL_CALLS]create_plan[ARGS]{{"goal": "...", "steps": [...]}}
-
-# GOAL FORMAT
-
-- Concise noun phrase (title style), NOT a full sentence
-- Do NOT end with verb forms like "합니다", "입니다"
-- Example: "T세포 고갈 조절 유전자 식별을 위한 CRISPR 스크린 실험 계획"
-
-# STEP FORMAT
-
-Each step has ONLY "name" and "description" fields:
-- name: 한글 단계 이름 (예: "관련 논문 검색")
-- description: 단계 설명
-
-Do NOT include "tool", "args", or "step" fields.
-Do NOT include a final summary/report step.
-
-# COMPLETE EXAMPLE
-
-{think_fmt}
-사용자가 CRISPR 스크린 실험 계획을 요청했다. 연구 배경, 실험 설계, 유전자 목록, RNA 설계, 제어 구축, 데이터 수집, 분석 단계로 나눠야 한다.
-{think_close}
-[TOOL_CALLS]create_plan[ARGS]{{"goal": "T세포 고갈 관련 유전자 식별을 위한 CRISPR 스크린 실험 계획", "steps": [{{"name": "연구 배경 및 문제 정의", "description": "T세포 고갈 관련 문헌을 조사하고 연구 목표를 구체화합니다"}}, {{"name": "실험 설계 기본 설정", "description": "CRISPR 라이브러리 선택 및 스크리닝 전략을 수립합니다"}}, {{"name": "유전자 목록 구성", "description": "타겟 유전자 후보를 선별하고 목록을 작성합니다"}}, {{"name": "sgRNA 설계 및 검증", "description": "선별된 유전자에 대한 sgRNA를 설계하고 효율성을 검증합니다"}}, {{"name": "데이터 분석 및 결과 해석", "description": "스크리닝 결과를 통계적으로 분석하고 유의미한 유전자를 식별합니다"}}]}}
+You MUST use {think_fmt}...{think_close} to reason step by step before creating your plan. Think carefully about the task, then provide your plan.
 
 # RULES
 
-- Output ONLY the tool call (after optional {think_fmt} block)
-- MUST start with [TOOL_CALLS], not [ARGS]
-- Each step MUST have name and description in Korean
-- MINIMUM 5 steps required per plan"""
+- Start with a Goal line, then list numbered steps with empty checkboxes
+- Goal: A concise noun phrase describing the overall objective
+- Each step MUST have a SHORT NAME (3-5 words) followed by a COLON, then a detailed description
+- The colon (:) separator between name and description is MANDATORY
+- Step names MUST be short noun phrases (3-5 words ONLY), NOT full sentences
+- NEVER write the entire description as the step name
+- Your plan MUST include at least 4 steps
+- Each step MUST perform a DISTINCT task — do NOT create steps that overlap or repeat similar work
+- Before finalizing, check that no two steps cover the same activity (e.g., do not have both "literature review" and "gene function research" as separate steps if they do the same thing)
+- Write the goal and step names/descriptions in the user's language
+
+# FORMAT
+
+Goal: [concise noun phrase describing the overall objective]
+
+1. [ ] Data collection: Gather relevant datasets from public databases and repositories for analysis
+2. [ ] Gene function analysis: Research the biological functions of each gene in relation to the target pathway
+3. [ ] Statistical modeling: Apply statistical methods to identify significant patterns in the data
+4. [ ] Results visualization: Create figures and plots to present the findings clearly
+
+WRONG (DO NOT do this - missing colon separator, name too long):
+1. [ ] Research the biological functions of each gene in relation to red blood cell development
+
+CORRECT (short name + colon + description):
+1. [ ] Gene function research: Research the biological functions of each gene in relation to red blood cell development
+
+# IMPORTANT
+
+After your {think_fmt} block, output ONLY the plan in the exact format above.
+Each step MUST be: "number. [ ] Short Name: Detailed description"
+Do not include any additional explanation, rationale, or commentary outside the plan."""
 
 
-# Keep legacy constant for backward compatibility
+# Legacy constant (regenerated with default think tags)
 SECTION_PLAN_CREATION = _build_plan_creation_section()
 
 
@@ -436,7 +393,7 @@ def _build_env_resources_section(
         library_intro = "The environment supports a list of libraries that can be directly used. Do not forget the import statement:"
         import_instruction = "IMPORTANT: DO NOT import functions from 'biomni_data'. It is a local directory, not a python module."
 
-    return f"""
+    parts = [f"""
 
 Environment Resources:
 
@@ -447,7 +404,10 @@ Environment Resources:
 ---
 
 {import_instruction}
+"""]
 
+    if data_lake_content:
+        parts.append(f"""
 - Biological data lake
 You can access a biological data lake at the following path: {data_lake_path}.
 {data_lake_intro}
@@ -455,18 +415,24 @@ Each item is listed with its description to help you understand its contents.
 ----
 {data_lake_content}
 ----
+""")
 
+    if library_content:
+        parts.append(f"""
 - Software Library:
 {library_intro}
 Each library is listed with its description to help you understand its functionality.
 ----
 {library_content}
 ----
+""")
 
+    parts.append("""
 - Note on using R packages and Bash scripts:
   - R packages: Use subprocess.run(['Rscript', '-e', 'your R code here']) in Python, or use the #!R marker in your execute block.
   - Bash scripts and commands: Use the #!BASH marker in your execute block for both simple commands and complex shell scripts with variables, loops, conditionals, etc.
-"""
+""")
+    return "".join(parts)
 
 
 # ═══════════════════════════════════════════
@@ -556,6 +522,8 @@ def build_prompt(
     know_how_docs: Optional[List[str]] = None,
     # Code gen specific
     file_schemas: str = "",
+    # Step execution — omit SECTION_PLAN to prevent model from creating a new plan
+    is_step_execution: bool = False,
 ) -> str:
     """Build a system prompt for the given mode.
 
@@ -586,12 +554,10 @@ def build_prompt(
         # For use_code_gen models: replace Section [C] with code_gen guide
         parts = [
             _build_role_section(token_format),
-            SECTION_PLAN,
         ]
-        if use_code_gen:
-            parts.append(SECTION_CODE_GEN_GUIDE)
-        else:
-            parts.append(_build_code_exec_section(token_format))
+        if not is_step_execution:
+            parts.append(_build_plan_section(token_format))
+        parts.append(_build_code_exec_section(token_format))
         parts.append(SECTION_PROTOCOL)
         if self_critic:
             parts.append(SECTION_SELF_CRITIC)
@@ -609,21 +575,8 @@ def build_prompt(
         return _build_role_section(token_format)
 
     elif mode == PromptMode.PLAN:
-        # Structured output: forces LLM to output [TOOL_CALLS]create_plan[ARGS]{JSON}
-        return SECTION_PLAN_SYSTEM
-
-    elif mode == PromptMode.CODE_GEN:
-        # Code gen = A + C(code rules) + code_gen_env + G(data lake + function dict)
-        parts = [_build_role_section(token_format), SECTION_CODE_GEN_ENV]
-        if data_lake_path:
-            parts.append(f"\n# DATA LAKE\nData lake path: {data_lake_path}")
-        if data_lake_content:
-            parts.append(f"Available data files:\n{data_lake_content}")
-        if file_schemas:
-            parts.append(f"\n# FILE SCHEMAS (pre-read)\n{file_schemas}")
-        if tool_desc:
-            parts.append(f"\n# AVAILABLE FUNCTIONS\n{tool_desc}")
-        return "\n".join(parts)
+        # Model-aware plan prompt with correct think token format
+        return _build_plan_creation_section(token_format)
 
     elif mode == PromptMode.ANALYZE:
         # Analyze = standalone Korean prompt
@@ -636,7 +589,6 @@ def build_prompt(
 def get_prompt_sections(
     mode: PromptMode,
     token_format: Optional[Dict[str, Any]] = None,
-    use_code_gen: bool = False,
 ) -> List[Dict[str, str]]:
     """Return labeled sections for a given mode (for the System Prompt Viewer).
 
@@ -648,10 +600,7 @@ def get_prompt_sections(
     if mode == PromptMode.FULL:
         sections.append({"label": "[A] Role", "content": _build_role_section(token_format)})
         sections.append({"label": "[B] Plan Rules", "content": SECTION_PLAN})
-        if use_code_gen:
-            sections.append({"label": "[C] Code Gen Guide", "content": SECTION_CODE_GEN_GUIDE})
-        else:
-            sections.append({"label": "[C] Code Execution", "content": _build_code_exec_section(token_format)})
+        sections.append({"label": "[C] Code Execution", "content": _build_code_exec_section(token_format)})
         sections.append({"label": "[D] Protocol Generation", "content": SECTION_PROTOCOL})
         sections.append({"label": "[E] Self-Critic", "content": SECTION_SELF_CRITIC})
         sections.append({"label": "[F] Custom Resources", "content": "(Dynamic — populated at runtime with custom tools, data, software, and know-how documents)"})
@@ -666,12 +615,7 @@ def get_prompt_sections(
             sections.append({"label": "[A] Role", "content": _build_role_section(token_format)})
 
     elif mode == PromptMode.PLAN:
-        sections.append({"label": "Plan Creation (Structured Output)", "content": SECTION_PLAN_SYSTEM})
-
-    elif mode == PromptMode.CODE_GEN:
-        sections.append({"label": "[A] Role", "content": _build_role_section(token_format)})
-        sections.append({"label": "Code Gen Environment", "content": SECTION_CODE_GEN_ENV})
-        sections.append({"label": "[G] Environment Resources", "content": "(Dynamic — data lake, function dictionary)"})
+        sections.append({"label": "Plan Creation (Structured Output)", "content": _build_plan_creation_section(token_format)})
 
     elif mode == PromptMode.ANALYZE:
         sections.append({"label": "Analyze (Korean)", "content": SECTION_ANALYZE})

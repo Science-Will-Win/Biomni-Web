@@ -1,22 +1,25 @@
-import { useState, useEffect, useRef } from 'react';
-import { ChevronDown } from 'lucide-react';
-import { useAppContext } from '@/context/AppContext';
-import { getCurrentModel, listModels, switchModel } from '@/api/models';
-import { useTranslation } from '@/i18n';
-import { MODEL_REGISTRY } from '@/config/models';
-import type { ModelInfo } from '@/types';
+import { useState, useEffect, useRef } from "react";
+import { ChevronDown, X, RefreshCw } from "lucide-react";
+import { useAppContext } from "@/context/AppContext";
+import { getCurrentModel, listModels, switchModel } from "@/api/models";
+import { useTranslation } from "@/i18n";
+import { useToast } from "@/components/common/Toast";
+import { MODEL_REGISTRY } from "@/config/models";
+import type { ModelInfo } from "@/types";
 
 export function ChatHeader() {
   const { state, dispatch } = useAppContext();
   const { t } = useTranslation();
+  const { addToast } = useToast();
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Load current model on mount
   useEffect(() => {
     getCurrentModel()
-      .then((model) => dispatch({ type: 'SET_CURRENT_MODEL', payload: model }))
+      .then((model) => dispatch({ type: "SET_CURRENT_MODEL", payload: model }))
       .catch(() => {});
   }, [dispatch]);
 
@@ -24,12 +27,12 @@ export function ChatHeader() {
   useEffect(() => {
     if (!dropdownOpen) return;
     const handler = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement).closest('.model-selector')) {
+      if (!(e.target as HTMLElement).closest(".model-selector")) {
         setDropdownOpen(false);
       }
     };
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
+    document.addEventListener("click", handler);
+    return () => document.removeEventListener("click", handler);
   }, [dropdownOpen]);
 
   const lastModels = useRef<ModelInfo[]>(MODEL_REGISTRY);
@@ -45,7 +48,7 @@ export function ChatHeader() {
     setModels(
       lastModels.current.map((m) => ({
         ...m,
-        status: m.name === currentName ? 'active' : m.status,
+        status: m.name === currentName ? "active" : m.status,
       })),
     );
     setDropdownOpen(true);
@@ -64,45 +67,92 @@ export function ChatHeader() {
       });
   };
 
-  const handleSelectModel = async (modelName: string) => {
+  const handleSelectModel = async (modelName: string, force = false) => {
     setDropdownOpen(false);
+    const controller = new AbortController();
+    abortRef.current = controller;
     setSwitching(true);
+    window.dispatchEvent(new Event("model-switching"));
     try {
-      await switchModel(modelName);
+      await switchModel(modelName, controller.signal, force);
       const updated = await getCurrentModel();
-      dispatch({ type: 'SET_CURRENT_MODEL', payload: updated });
-    } catch {
-      // Silently fail
+      dispatch({ type: "SET_CURRENT_MODEL", payload: updated });
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        const msg = err instanceof Error ? err.message : "Model switch failed";
+        addToast(msg, "error");
+      }
     } finally {
       setSwitching(false);
+      abortRef.current = null;
+      window.dispatchEvent(new Event("model-switching"));
     }
   };
 
-  const localModels = models.filter((m) => m.type === 'local');
-  const apiModels = models.filter((m) => m.type === 'api');
+  const handleCancelSwitch = () => abortRef.current?.abort();
 
-  const isActive = (m: ModelInfo) =>
-    m.name === state.currentModel?.name;
+  const handleRefreshModel = () => {
+    if (state.currentModel) handleSelectModel(state.currentModel.name, true);
+  };
+
+  const localModels = models.filter((m) => m.type === "local");
+  const apiModels = models.filter((m) => m.type === "api");
+
+  const isActive = (m: ModelInfo) => m.name === state.currentModel?.name;
   const isDisabled = (m: ModelInfo) =>
-    m.status !== 'available' && m.status !== 'active';
+    m.status !== "available" && m.status !== "active";
 
   return (
     <header className="chat-header">
       <div className="model-info">
         <span className="model-label">MODEL:</span>
-        <div className="model-selector" onClick={handleOpenDropdown}>
+        <div
+          className={`model-selector${switching ? " switching" : ""}`}
+          onClick={!switching ? handleOpenDropdown : undefined}
+        >
           <span className="model-name">
-            {switching
-              ? t('switching_model')
-              : state.currentModel
-                ? (state.currentModel.display_name || state.currentModel.name)
-                : '—'}
+            {state.currentModel
+              ? state.currentModel.display_name || state.currentModel.name
+              : "—"}
           </span>
-          <button className="model-dropdown-btn" type="button">
+
+          <button
+            className="model-dropdown-btn"
+            type="button"
+            disabled={switching}
+          >
             <ChevronDown size={14} />
           </button>
-          {dropdownOpen && (
-            <div className="model-dropdown" onClick={(e) => e.stopPropagation()}>
+
+          {state.currentModel?.type === "local" && (
+            <button
+              className={`model-header-action${switching ? " spinning" : ""}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!switching) handleRefreshModel();
+              }}
+              disabled={switching}
+            >
+              <RefreshCw size={12} />
+            </button>
+          )}
+
+          {switching && (
+            <button
+              className="model-header-action cancel-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCancelSwitch();
+              }}
+            >
+              <X size={14} />
+            </button>
+          )}
+          {dropdownOpen && !switching && (
+            <div
+              className="model-dropdown"
+              onClick={(e) => e.stopPropagation()}
+            >
               {models.length === 0 ? (
                 <div className="model-dropdown-item disabled">
                   <span>Failed to load models</span>
@@ -115,8 +165,12 @@ export function ChatHeader() {
                       {localModels.map((m) => (
                         <div
                           key={m.name}
-                          className={`model-dropdown-item${isActive(m) ? ' active' : ''}${isDisabled(m) ? ' disabled' : ''}`}
-                          onClick={() => !isDisabled(m) && !isActive(m) && handleSelectModel(m.name)}
+                          className={`model-dropdown-item${isActive(m) ? " active" : ""}${isDisabled(m) ? " disabled" : ""}`}
+                          onClick={() =>
+                            !isDisabled(m) &&
+                            !isActive(m) &&
+                            handleSelectModel(m.name)
+                          }
                         >
                           <span>{m.display_name || m.name}</span>
                         </div>
@@ -132,8 +186,12 @@ export function ChatHeader() {
                       {apiModels.map((m) => (
                         <div
                           key={m.name}
-                          className={`model-dropdown-item${isActive(m) ? ' active' : ''}${isDisabled(m) ? ' disabled' : ''}`}
-                          onClick={() => !isDisabled(m) && !isActive(m) && handleSelectModel(m.name)}
+                          className={`model-dropdown-item${isActive(m) ? " active" : ""}${isDisabled(m) ? " disabled" : ""}`}
+                          onClick={() =>
+                            !isDisabled(m) &&
+                            !isActive(m) &&
+                            handleSelectModel(m.name)
+                          }
                         >
                           <span>{m.display_name || m.name}</span>
                           <span className="provider-badge">{m.provider}</span>

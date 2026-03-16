@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 biomni_data
+.claude
 
 # Editor directories and files
 .vscode/*

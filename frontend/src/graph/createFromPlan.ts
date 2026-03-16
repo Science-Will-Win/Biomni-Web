@@ -19,15 +19,18 @@ export function createFromPlan(planData: PlanData): GraphBuildResult {
   const nodeWidth = 320;
   const edgeGap = 50;
   // Type-specific estimated heights for edge-to-edge equal spacing
-  const promptHeight = 90;    // textarea makes it taller
   const stepHeight = 80;      // header + description
   const analysisHeight = 60;  // compact
   const startX = 0;
   let currentY = 40;
   let connId = 1;
 
-  // Prompt input node
+  // Prompt input node — dynamic height based on text content
   const promptText = planData.userMessage || planData.goal || '';
+  const charsPerLine = Math.floor((nodeWidth - 24) / 7.5); // ~7.5px per char at 11px monospace
+  const textLineCount = promptText.split('\n').reduce((acc: number, line: string) =>
+    acc + Math.max(1, Math.ceil(Math.max(1, line.length) / charsPerLine)), 0);
+  const promptHeight = Math.max(90, 54 + textLineCount * 16); // header(~54px) + lines * lineHeight(16px)
   const promptNodeId = 'prompt-input';
   nodes.push({
     id: promptNodeId,
@@ -122,6 +125,63 @@ export function createFromPlan(planData: PlanData): GraphBuildResult {
       type: 'flow',
     });
   }
+
+  return { nodes, connections };
+}
+
+/**
+ * Create a minimal empty graph scaffold (Prompt + Analysis node).
+ * User can then add step nodes via the canvas CreateNodeMenu.
+ */
+export function createEmptyGraph(promptText: string = ''): GraphBuildResult {
+  const nodeWidth = 320;
+  const nodes: NodeData[] = [];
+  const connections: ConnectionData[] = [];
+  let currentY = 40;
+
+  // Prompt Input node — dynamic height based on text content
+  const charsPerLine = Math.floor((nodeWidth - 24) / 7.5);
+  const textLineCount = promptText
+    ? promptText.split('\n').reduce((acc: number, line: string) =>
+        acc + Math.max(1, Math.ceil(Math.max(1, line.length) / charsPerLine)), 0)
+    : 0;
+  const promptHeight = Math.max(90, 54 + textLineCount * 16);
+
+  nodes.push({
+    id: 'prompt-input',
+    type: 'string',
+    title: 'Prompt',
+    x: 0,
+    y: currentY,
+    width: nodeWidth,
+    height: promptHeight,
+    status: 'pending',
+    portValues: { out: promptText },
+  });
+  currentY += promptHeight + 50;
+
+  // Analysis node
+  nodes.push({
+    id: 'analysis-node',
+    type: 'analyze',
+    title: 'Analysis',
+    tool: 'analyze_plan',
+    x: 0,
+    y: currentY,
+    width: nodeWidth,
+    height: 60,
+    status: 'pending',
+  });
+
+  // Connect Prompt → Analysis
+  connections.push({
+    id: 'conn-1',
+    from: 'prompt-input',
+    fromPort: 'out',
+    to: 'analysis-node',
+    toPort: 'in',
+    type: 'flow',
+  });
 
   return { nodes, connections };
 }

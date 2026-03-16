@@ -15,11 +15,12 @@ export async function listModels(signal?: AbortSignal): Promise<ModelInfo[]> {
   return fetchJSON('/api/models', signal ? { signal } : undefined);
 }
 
-export async function switchModel(modelName: string): Promise<StatusResponse> {
-  const body: ModelSwitchRequest = { model_name: modelName };
+export async function switchModel(modelName: string, signal?: AbortSignal, force?: boolean): Promise<StatusResponse> {
+  const body: ModelSwitchRequest = { model_name: modelName, ...(force ? { force: true } : {}) };
   return fetchJSON('/api/model/switch', {
     method: 'POST',
     body: JSON.stringify(body),
+    ...(signal ? { signal } : {}),
   });
 }
 

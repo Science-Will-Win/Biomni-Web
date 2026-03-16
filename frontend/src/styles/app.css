@@ -119,6 +119,7 @@ html, body {
     display: flex;
     height: 100vh;
     min-width: 800px;
+    overflow-x: hidden;
     overflow-y: clip;
     position: relative;
     z-index: 1;
@@ -435,6 +436,55 @@ html, body {
     color: var(--text-color);
 }
 
+.model-switching-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border-color);
+    border-top-color: var(--text-muted);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    flex-shrink: 0;
+}
+
+.model-switching-text {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
+.model-header-action {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px;
+    display: flex;
+    align-items: center;
+    border-radius: 4px;
+    transition: background 0.15s, color 0.15s;
+    flex-shrink: 0;
+}
+
+.model-header-action:hover {
+    background: var(--hover-bg);
+    color: var(--text-color);
+}
+
+.model-header-action.spinning {
+    animation: spin 1s linear infinite;
+    pointer-events: none;
+    opacity: 0.6;
+}
+
+.model-header-action.cancel-btn {
+    animation: fadeSlideIn 0.25s ease-out;
+}
+
+@keyframes fadeSlideIn {
+    from { opacity: 0; transform: scale(0.8); }
+    to { opacity: 1; transform: scale(1); }
+}
+
 .model-selector {
     display: flex;
     align-items: center;
@@ -443,7 +493,11 @@ html, body {
     cursor: pointer;
     padding: 4px 8px;
     border-radius: 6px;
-    transition: background 0.2s;
+    transition: background 0.2s, gap 0.2s ease;
+}
+
+.model-selector.switching {
+    cursor: default;
 }
 
 .model-selector:hover {
@@ -683,6 +737,11 @@ html, body {
     box-shadow: var(--shadow-sm);
 }
 
+.message.user .message-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 /* Assistant Message Content - Light card */
 .message.assistant .message-content {
     background: var(--card-bg);
@@ -856,7 +915,6 @@ html, body {
 
 .edit-textarea {
     width: 100%;
-    min-height: 1.6em;
     padding: 0;
     border: none;
     border-radius: 0;
@@ -2076,6 +2134,13 @@ html, body {
     background: var(--bg-color); border-top: 1px solid var(--border-color);
     font-family: 'Consolas', 'Monaco', monospace; color: var(--text-color);
 }
+.sp-readonly-block {
+    padding: 12px 14px; margin: 0; font-size: 12px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word; max-height: 150px; overflow-y: auto;
+    background: var(--bg-color); border: 1px solid var(--border-color); border-radius: var(--radius-md);
+    font-family: 'Consolas', 'Monaco', monospace; color: var(--text-secondary);
+    opacity: 0.7;
+}
 .sp-loading { padding: 40px; text-align: center; color: var(--text-muted); font-size: 13px; }
 .sp-sections-details { margin-bottom: 10px; }
 .sp-sections-summary {
@@ -2913,6 +2978,13 @@ body,
     margin-bottom: 2px;
 }
 
+.step-description {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+    line-height: 1.4;
+}
+
 .step-tool {
     font-size: 12px;
     color: var(--text-tertiary);
@@ -3056,6 +3128,7 @@ body,
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+    flex-wrap: wrap;
 }
 
 .plan-goal-text {
@@ -3100,6 +3173,7 @@ body,
     opacity: 1;
     color: var(--accent-primary);
 }
+
 
 /* Detail Panel PlanTab — step layout */
 .plan-content .plan-step {
@@ -3779,9 +3853,32 @@ body,
     font-weight: 600;
     color: #8b5cf6;
 }
+.plan-tool-retrieval-row {
+    gap: 6px;
+    width: 100%;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-tertiary, rgba(255,255,255,0.35));
+    letter-spacing: 0.02em;
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    padding: 0;
+    transition: max-height 0.4s ease, opacity 0.3s ease, padding 0.4s ease;
+}
+.plan-tool-retrieval-row.running {
+    max-height: 30px;
+    opacity: 1;
+    padding: 4px 0 0;
+}
+.plan-tool-retrieval-row.done {
+    max-height: 0;
+    opacity: 0;
+    padding: 0;
+    transition: max-height 0.5s ease 0.8s, opacity 0.5s ease 0.5s, padding 0.5s ease 0.8s;
+}
 .plan-solution-box {
     padding: 10px 14px;
-    border-top: 1px solid var(--border-subtle, var(--border-color));
     background: rgba(76, 175, 80, 0.05);
     border-radius: 0 0 8px 8px;
 }
@@ -4217,8 +4314,8 @@ body,
 /* Detail Panel */
 .detail-panel {
     width: var(--detail-panel-width, 40%);
-    min-width: 300px;
-    max-width: min(60%, calc(100% - 320px));
+    min-width: 380px;
+    max-width: min(60%, calc(100% - 550px));
     background: var(--card-bg);
     border-left: 1px solid var(--border-color);
     display: flex;
@@ -4240,6 +4337,7 @@ body,
 .detail-tabs {
     display: flex;
     gap: 4px;
+    min-width: 0;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none;
@@ -4288,7 +4386,10 @@ body,
     border-radius: var(--radius-md);
     transition: all var(--transition-fast);
     white-space: nowrap;
-    flex-shrink: 0;
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .detail-tab:hover {
@@ -4541,6 +4642,36 @@ body,
     overflow: hidden;
 }
 
+.code-step-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-color);
+}
+.code-step-header .code-block-lang {
+    font-weight: 400;
+}
+.code-groups {
+    display: flex;
+    flex-direction: column;
+}
+.code-group {
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+}
+.code-group:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+}
+.code-group.error {
+    border-left: 3px solid var(--error);
+}
+
 .code-block-header {
     display: flex;
     align-items: center;
@@ -4661,6 +4792,19 @@ body,
     font-style: italic;
 }
 
+.import-corrections {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 4px 0;
+}
+
+.import-correction-item {
+    font-style: italic;
+    color: #b07d2e;
+    font-size: 0.82em;
+}
+
 .code-fix-info {
     font-size: 11px;
     color: var(--warning, #e8a838);
@@ -4696,6 +4840,28 @@ body,
 }
 
 /* Code execution results */
+/* Intermediate execution blocks (streaming during step run) */
+.code-intermediate-execs {
+    border-top: 1px solid var(--border-color);
+    padding: 8px 0;
+}
+.code-intermediate-exec {
+    border-bottom: 1px solid var(--border-color);
+    padding: 12px 0;
+    margin-bottom: 4px;
+}
+.code-intermediate-exec:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+}
+.code-intermediate-exec.error .code-result {
+    border-left: 3px solid var(--error-color, #e06c75);
+}
+.code-intermediate-execs .analyzing-spinner {
+    display: block;
+    margin: 8px auto;
+}
+
 .code-result {
     border-top: 1px solid var(--border-color);
     padding: 10px 16px;
@@ -4815,6 +4981,106 @@ body,
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+
+.output-plan-checklist {
+    margin-bottom: 14px;
+    padding: 14px 16px;
+    background: var(--card-bg);
+    border-radius: var(--radius-md);
+    border-left: 3px solid var(--accent-color, #4f8ef7);
+}
+
+.output-plan-goal {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+}
+
+.output-plan-steps {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.output-plan-step {
+    font-size: 12px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+}
+
+.output-plan-step .step-check {
+    width: 16px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.output-plan-step.completed .step-check {
+    color: var(--success-color, #22c55e);
+}
+
+.output-plan-step.error {
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 0;
+}
+
+.output-plan-step.error .step-check {
+    color: var(--error-color, #ef4444);
+}
+
+.output-plan-step.stopped .step-check {
+    color: #9ca3af;
+}
+
+.output-plan-step.running .step-check {
+    color: var(--accent-color, #4f8ef7);
+}
+
+.output-plan-step .step-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.output-plan-step .step-desc {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-top: 1px;
+}
+
+.output-retrieved-tools {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-light, rgba(255, 255, 255, 0.06));
+}
+
+.output-retrieved-tools-label {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-bottom: 6px;
+}
+
+.output-retrieved-tools-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.output-tool-tag {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--bg-tertiary, rgba(255, 255, 255, 0.06));
+    color: var(--text-secondary);
 }
 
 .output-step-section {
@@ -4867,6 +5133,39 @@ body,
 
 .output-content {
     padding: 0;
+}
+
+/* Code + Output pairing: collapse gap when adjacent */
+.output-content .code-block + .result-stdout {
+    margin-top: 0;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+}
+
+.output-content .code-block:has(+ .result-stdout) {
+    margin-bottom: 0;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+/* Output reasoning text */
+.output-reasoning {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    margin: 8px 0;
+}
+
+/* Output solution block */
+.output-solution {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-color);
+    margin: 8px 0;
+    padding: 8px 12px;
+    background: var(--card-bg);
+    border-left: 3px solid var(--accent-color);
+    border-radius: var(--radius-sm);
 }
 
 .output-title {
@@ -5273,6 +5572,21 @@ body,
     line-height: 1.6;
     margin: 0;
 }
+.graph-create-btn {
+    margin-top: 12px;
+    padding: 6px 14px;
+    font-size: 12px;
+    border: 1px solid var(--primary-color);
+    background: var(--primary-color);
+    color: #fff;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+.graph-create-btn:hover {
+    background: var(--primary-hover);
+    border-color: var(--primary-hover);
+}
 
 /* ============================================
    Graph Popout
@@ -5313,6 +5627,20 @@ body,
 .graph-rerun-btn:hover {
     background: var(--card-bg-hover);
     border-color: var(--primary-color);
+}
+.graph-start-btn {
+    padding: 4px 10px;
+    font-size: 12px;
+    border: 1px solid var(--primary-color);
+    background: var(--primary-color);
+    color: #fff;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+.graph-start-btn:hover {
+    background: var(--primary-hover);
+    border-color: var(--primary-hover);
 }
 
 .graph-popout-btn {

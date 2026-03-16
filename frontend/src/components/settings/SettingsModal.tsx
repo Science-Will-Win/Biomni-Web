@@ -1,14 +1,14 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Eye, EyeOff } from 'lucide-react';
-import { useAppContext } from '@/context/AppContext';
-import { useSettings } from '@/context/SettingsContext';
-import { useTranslation } from '@/i18n';
-import { AVAILABLE_LANGUAGES } from '@/i18n';
-import { listApiKeys, setApiKey } from '@/api/models';
-import { updateSettings as updateBackendSettings } from '@/api/settings';
-import type { ApiKeyInfo } from '@/types';
+import { useState, useEffect, useRef, useCallback } from "react";
+import { X, Eye, EyeOff } from "lucide-react";
+import { useAppContext } from "@/context/AppContext";
+import { useSettings } from "@/context/SettingsContext";
+import { useTranslation } from "@/i18n";
+import { AVAILABLE_LANGUAGES } from "@/i18n";
+import { listApiKeys, setApiKey } from "@/api/models";
+import { updateSettings as updateBackendSettings } from "@/api/settings";
+import type { ApiKeyInfo } from "@/types";
 
-type Tab = 'general' | 'appearance' | 'api-keys';
+type Tab = "general" | "appearance" | "api-keys";
 
 interface DraftGeneral {
   language: string;
@@ -34,9 +34,17 @@ interface DraftApiKeys {
 
 export function SettingsModal() {
   const { dispatch: appDispatch } = useAppContext();
-  const { settings, updateSettings, setTheme, setLanguage, setBgImage, setBgBlur, setBgOpacity } = useSettings();
+  const {
+    settings,
+    updateSettings,
+    setTheme,
+    setLanguage,
+    setBgImage,
+    setBgBlur,
+    setBgOpacity,
+  } = useSettings();
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<Tab>('general');
+  const [activeTab, setActiveTab] = useState<Tab>("general");
 
   // Draft state for General tab (committed on Save)
   const [draft, setDraft] = useState<DraftGeneral>({
@@ -57,17 +65,19 @@ export function SettingsModal() {
 
   // Draft state for API Keys tab
   const [apiDraft, setApiDraft] = useState<DraftApiKeys>({
-    openai: '',
-    anthropic: '',
-    google: '',
+    openai: "",
+    anthropic: "",
+    google: "",
   });
   const [apiKeyInfo, setApiKeyInfo] = useState<ApiKeyInfo[]>([]);
 
   useEffect(() => {
-    listApiKeys().then(setApiKeyInfo).catch(() => {});
+    listApiKeys()
+      .then(setApiKeyInfo)
+      .catch(() => {});
   }, []);
 
-  const close = () => appDispatch({ type: 'CLOSE_MODAL' });
+  const close = () => appDispatch({ type: "CLOSE_MODAL" });
 
   const handleSave = async () => {
     // 1. Server settings
@@ -85,7 +95,7 @@ export function SettingsModal() {
     }).catch(() => {});
 
     // 2. API keys (only non-empty)
-    const providers = ['openai', 'anthropic', 'google'] as const;
+    const providers = ["openai", "anthropic", "google"] as const;
     for (const p of providers) {
       if (apiDraft[p]) {
         await setApiKey(p, apiDraft[p]).catch(() => {});
@@ -93,8 +103,8 @@ export function SettingsModal() {
     }
 
     // 3. localStorage
-    localStorage.setItem('user_name', draft.userName);
-    localStorage.setItem('max_attachments', String(draft.maxAttachments));
+    localStorage.setItem("user_name", draft.userName);
+    localStorage.setItem("max_attachments", String(draft.maxAttachments));
 
     // 4. Language
     if (draft.language !== settings.language) {
@@ -123,37 +133,44 @@ export function SettingsModal() {
 
   return (
     <div className="modal active" onClick={close}>
-      <div className="modal-content settings-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal-content settings-modal"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-header">
-          <h3>{t('settings') !== 'settings' ? t('settings') : 'Settings'}</h3>
-          <button className="modal-close" onClick={close}><X size={18} /></button>
+          <h3>{t("settings") !== "settings" ? t("settings") : "Settings"}</h3>
+          <button className="modal-close" onClick={close}>
+            <X size={18} />
+          </button>
         </div>
         <div className="settings-body">
           <nav className="settings-nav">
             <button
-              className={`settings-nav-item ${activeTab === 'general' ? 'active' : ''}`}
-              onClick={() => setActiveTab('general')}
+              className={`settings-nav-item ${activeTab === "general" ? "active" : ""}`}
+              onClick={() => setActiveTab("general")}
             >
-              {t('general') !== 'general' ? t('general') : 'General'}
+              {t("general") !== "general" ? t("general") : "General"}
             </button>
             <button
-              className={`settings-nav-item ${activeTab === 'appearance' ? 'active' : ''}`}
-              onClick={() => setActiveTab('appearance')}
+              className={`settings-nav-item ${activeTab === "appearance" ? "active" : ""}`}
+              onClick={() => setActiveTab("appearance")}
             >
-              {t('appearance') !== 'appearance' ? t('appearance') : 'Appearance'}
+              {t("appearance") !== "appearance"
+                ? t("appearance")
+                : "Appearance"}
             </button>
             <button
-              className={`settings-nav-item ${activeTab === 'api-keys' ? 'active' : ''}`}
-              onClick={() => setActiveTab('api-keys')}
+              className={`settings-nav-item ${activeTab === "api-keys" ? "active" : ""}`}
+              onClick={() => setActiveTab("api-keys")}
             >
               API Keys
             </button>
           </nav>
           <div className="settings-content">
-            {activeTab === 'general' && (
+            {activeTab === "general" && (
               <GeneralTab draft={draft} setDraft={setDraft} t={t} />
             )}
-            {activeTab === 'appearance' && (
+            {activeTab === "appearance" && (
               <AppearanceTab
                 settings={settings}
                 setTheme={setTheme}
@@ -163,7 +180,7 @@ export function SettingsModal() {
                 t={t}
               />
             )}
-            {activeTab === 'api-keys' && (
+            {activeTab === "api-keys" && (
               <ApiKeysTab
                 apiDraft={apiDraft}
                 setApiDraft={setApiDraft}
@@ -208,29 +225,31 @@ function GeneralTab({
     <div className="settings-tab-content active">
       <div className="setting-item">
         <label className="setting-label">
-          {t('language') !== 'language' ? t('language') : 'Language'}
+          {t("language") !== "language" ? t("language") : "Language"}
         </label>
         <select
           className="modal-input"
           value={draft.language}
-          onChange={(e) => update('language', e.target.value)}
+          onChange={(e) => update("language", e.target.value)}
         >
           {AVAILABLE_LANGUAGES.map((l) => (
-            <option key={l.code} value={l.code}>{l.name}</option>
+            <option key={l.code} value={l.code}>
+              {l.name}
+            </option>
           ))}
         </select>
       </div>
 
       <div className="setting-item">
         <label className="setting-label">
-          {t('user_name') !== 'user_name' ? t('user_name') : 'Display Name'}
+          {t("user_name") !== "user_name" ? t("user_name") : "Display Name"}
         </label>
         <input
           type="text"
           className="modal-input"
           maxLength={10}
           value={draft.userName}
-          onChange={(e) => update('userName', e.target.value)}
+          onChange={(e) => update("userName", e.target.value)}
         />
       </div>
 
@@ -243,7 +262,9 @@ function GeneralTab({
           max={2}
           step={0.1}
           value={draft.temperature}
-          onChange={(e) => update('temperature', parseFloat(e.target.value) || 0)}
+          onChange={(e) =>
+            update("temperature", parseFloat(e.target.value) || 0)
+          }
         />
       </div>
 
@@ -255,7 +276,7 @@ function GeneralTab({
           min={256}
           step={256}
           value={draft.maxTokens}
-          onChange={(e) => update('maxTokens', parseInt(e.target.value) || 256)}
+          onChange={(e) => update("maxTokens", parseInt(e.target.value) || 256)}
         />
       </div>
 
@@ -268,13 +289,16 @@ function GeneralTab({
           max={100}
           step={1}
           value={draft.topK}
-          onChange={(e) => update('topK', parseInt(e.target.value) || 1)}
+          onChange={(e) => update("topK", parseInt(e.target.value) || 1)}
         />
       </div>
 
       <div className="setting-item">
         <label className="setting-label">
-          {t('max_attachments') !== 'max_attachments' ? t('max_attachments') : 'Max Attachments'}: {draft.maxAttachments}
+          {t("max_attachments") !== "max_attachments"
+            ? t("max_attachments")
+            : "Max Attachments"}
+          : {draft.maxAttachments}
         </label>
         <input
           type="range"
@@ -283,7 +307,7 @@ function GeneralTab({
           max={10}
           step={1}
           value={draft.maxAttachments}
-          onChange={(e) => update('maxAttachments', parseInt(e.target.value))}
+          onChange={(e) => update("maxAttachments", parseInt(e.target.value))}
         />
       </div>
 
@@ -296,25 +320,10 @@ function GeneralTab({
           max={262144}
           step={1024}
           value={draft.maxContext}
-          onChange={(e) => update('maxContext', parseInt(e.target.value) || 1024)}
+          onChange={(e) =>
+            update("maxContext", parseInt(e.target.value) || 1024)
+          }
         />
-      </div>
-
-      <div className="setting-item">
-        <label className="setting-label">
-          Compact Prompt Mode
-          <span className="setting-description" style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Uses a minimal code-gen prompt for small models. May cause formatting errors.
-          </span>
-        </label>
-        <label className="toggle-switch">
-          <input
-            type="checkbox"
-            checked={draft.useCompactPrompt}
-            onChange={(e) => update('useCompactPrompt', e.target.checked ? true : false)}
-          />
-          <span className="slider round"></span>
-        </label>
       </div>
 
       <div className="setting-section-divider" />
@@ -331,7 +340,9 @@ function GeneralTab({
           max={2}
           step={0.05}
           value={draft.refusalThreshold}
-          onChange={(e) => update('refusalThreshold', parseFloat(e.target.value))}
+          onChange={(e) =>
+            update("refusalThreshold", parseFloat(e.target.value))
+          }
         />
       </div>
 
@@ -344,7 +355,9 @@ function GeneralTab({
           max={10}
           step={1}
           value={draft.refusalMaxRetries}
-          onChange={(e) => update('refusalMaxRetries', parseInt(e.target.value) || 1)}
+          onChange={(e) =>
+            update("refusalMaxRetries", parseInt(e.target.value) || 1)
+          }
         />
       </div>
 
@@ -359,7 +372,9 @@ function GeneralTab({
           max={1}
           step={0.05}
           value={draft.refusalTempDecay}
-          onChange={(e) => update('refusalTempDecay', parseFloat(e.target.value))}
+          onChange={(e) =>
+            update("refusalTempDecay", parseFloat(e.target.value))
+          }
         />
       </div>
 
@@ -374,7 +389,7 @@ function GeneralTab({
           max={1}
           step={0.05}
           value={draft.refusalMinTemp}
-          onChange={(e) => update('refusalMinTemp', parseFloat(e.target.value))}
+          onChange={(e) => update("refusalMinTemp", parseFloat(e.target.value))}
         />
       </div>
 
@@ -387,7 +402,9 @@ function GeneralTab({
           max={200}
           step={10}
           value={draft.refusalRecoveryTokens}
-          onChange={(e) => update('refusalRecoveryTokens', parseInt(e.target.value) || 10)}
+          onChange={(e) =>
+            update("refusalRecoveryTokens", parseInt(e.target.value) || 10)
+          }
         />
       </div>
     </div>
@@ -404,7 +421,7 @@ function AppearanceTab({
   setBgOpacity,
   t,
 }: {
-  settings: ReturnType<typeof useSettings>['settings'];
+  settings: ReturnType<typeof useSettings>["settings"];
   setTheme: (t: string) => void;
   setBgImage: (url: string | null) => void;
   setBgBlur: (v: number) => void;
@@ -421,25 +438,25 @@ function AppearanceTab({
       setBgImage(reader.result as string);
     };
     reader.readAsDataURL(file);
-    e.target.value = '';
+    e.target.value = "";
   };
 
   return (
     <div className="settings-tab-content active">
       <div className="setting-item">
         <label className="setting-label">
-          {t('theme') !== 'theme' ? t('theme') : 'Theme'}
+          {t("theme") !== "theme" ? t("theme") : "Theme"}
         </label>
         <div className="theme-buttons">
           <button
-            className={`theme-btn ${settings.theme === 'soft-minimal' ? 'active' : ''}`}
-            onClick={() => setTheme('soft-minimal')}
+            className={`theme-btn ${settings.theme === "soft-minimal" ? "active" : ""}`}
+            onClick={() => setTheme("soft-minimal")}
           >
             Soft Minimal
           </button>
           <button
-            className={`theme-btn ${settings.theme === 'cyber-edge' ? 'active' : ''}`}
-            onClick={() => setTheme('cyber-edge')}
+            className={`theme-btn ${settings.theme === "cyber-edge" ? "active" : ""}`}
+            onClick={() => setTheme("cyber-edge")}
           >
             Cyber Edge
           </button>
@@ -452,7 +469,7 @@ function AppearanceTab({
           ref={fileInputRef}
           type="file"
           accept="image/*"
-          style={{ display: 'none' }}
+          style={{ display: "none" }}
           onChange={handleImageSelect}
         />
         <div className="bg-image-controls">
@@ -524,7 +541,7 @@ function ApiKeysTab({
   t: (k: string) => string;
 }) {
   const [visibility, setVisibility] = useState<Record<string, boolean>>({});
-  const providers = ['openai', 'anthropic', 'google'] as const;
+  const providers = ["openai", "anthropic", "google"] as const;
 
   const toggleVisibility = (provider: string) => {
     setVisibility((prev) => ({ ...prev, [provider]: !prev[provider] }));
@@ -544,11 +561,16 @@ function ApiKeysTab({
             <div className="api-key-input-group">
               <input
                 className="modal-input"
-                type={isVisible ? 'text' : 'password'}
-                placeholder={info?.is_set ? '••••••••' : `Enter ${provider} API key`}
+                type={isVisible ? "text" : "password"}
+                placeholder={
+                  info?.is_set ? "••••••••" : `Enter ${provider} API key`
+                }
                 value={apiDraft[provider]}
                 onChange={(e) =>
-                  setApiDraft((prev) => ({ ...prev, [provider]: e.target.value }))
+                  setApiDraft((prev) => ({
+                    ...prev,
+                    [provider]: e.target.value,
+                  }))
                 }
               />
               <button

@@ -45,7 +45,7 @@ export function useDetailResize(
       const intendedWidth = startWidth.current + delta;
       rawWidth.current = intendedWidth;
       const maxWidth = Math.min(container.clientWidth * 0.6, container.clientWidth - 320);
-      const newWidth = Math.max(250, Math.min(intendedWidth, maxWidth));
+      const newWidth = Math.max(330, Math.min(intendedWidth, maxWidth));
 
       container.style.setProperty('--detail-panel-width', `${newWidth}px`);
     };

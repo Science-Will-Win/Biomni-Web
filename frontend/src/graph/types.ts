@@ -16,6 +16,8 @@ export interface PortDef {
   dir: PortDir;
   type: PortType;
   label?: string;
+  required?: boolean;
+  description?: string;
 }
 
 export interface I18nField {
@@ -36,6 +38,8 @@ export interface NodeData {
   stepNum?: string;
   portValues?: Record<string, unknown>;
   resultText?: string;
+  userResized?: boolean;
+  userMoved?: boolean;
 }
 
 export interface ConnectionData {

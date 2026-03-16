@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ChevronRight } from 'lucide-react';
+import { MarkdownContent } from '@/utils/MarkdownContent';
 
 interface Props {
   label: string;
@@ -9,11 +10,33 @@ interface Props {
 }
 
 /**
+ * Convert [EXECUTE]/[OBSERVATION] inside think content to markdown.
+ */
+function processThinkContent(content: string): string {
+  let result = content;
+  // Closed execute → code blocks (cross-format)
+  result = result.replace(/(?:<execute>|\[EXECUTE\])((?:(?!(?:<execute>|\[EXECUTE\]))[\s\S])*?)(?:<\/execute>|\[\/EXECUTE\])/gi,
+    (_m: string, code: string) => '\n```python\n' + code.trim() + '\n```\n');
+  // Unclosed (streaming) — last block only (cross-format)
+  result = result.replace(/(?:<execute>|\[EXECUTE\])((?:(?!(?:<execute>|\[EXECUTE\]))[\s\S])*)$/i,
+    (_m: string, code: string) => '\n```python\n' + code.trim() + '\n```\n');
+  // Empty observation blocks (cross-format)
+  result = result.replace(/(?:<observation>|\[OBSERVATION\])\s*(?:<\/observation>|\[\/OBSERVATION\])/gi, '');
+  // Observation → blockquote (cross-format)
+  result = result.replace(/(?:<observation>|\[OBSERVATION\])([\s\S]*?)(?:<\/observation>|\[\/OBSERVATION\])/gi,
+    (_m: string, obs: string) => '\n> **Output:** ' + obs.trim() + '\n');
+  // Strip orphan tags
+  result = result.replace(/\[EXECUTE\]/g, '');
+  result = result.replace(/<\/?execute>/gi, '');
+  return result;
+}
+
+/**
  * Collapsible block for special tokens ([THINK], etc.).
  * Think variant: minimal gray design with ▶/▼ triangle.
  *  - Streaming: collapsed, shows last line rolling below toggle
  *  - Complete: collapsed, shows 80-char italic preview
- *  - Expanded: full content with line-by-line <p> rendering
+ *  - Expanded: full content with MarkdownContent rendering (code blocks, blockquotes)
  */
 export function SpecialTokenBlock({ label, content, variant = 'think', isStreaming = false }: Props) {
   const [expanded, setExpanded] = useState(false);
@@ -33,10 +56,8 @@ export function SpecialTokenBlock({ label, content, variant = 'think', isStreami
           <span className="cot-label">Thinking</span>
         </button>
         {expanded ? (
-          <div className="cot-content">
-            {content.split('\n').map((line, i) => (
-              <p key={i} className="cot-line">{line || '\u00A0'}</p>
-            ))}
+          <div className="cot-content markdown-content">
+            <MarkdownContent text={processThinkContent(content)} />
           </div>
         ) : (
           <div className="cot-preview">
