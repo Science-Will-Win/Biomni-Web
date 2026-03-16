@@ -6,6 +6,7 @@ import type { NodeData, PortDef, I18nField } from './types';
 
 export interface NodeComponentProps {
   node: NodeData;
+  connectedPorts?: Set<string>;
   onTitleChange?: (nodeId: string, newTitle: string) => void;
   onPortValueChange?: (nodeId: string, portName: string, value: unknown) => void;
 }
@@ -29,6 +30,8 @@ export interface NodeDefinition {
   allowRef?: boolean;
   dataOnly?: boolean;
   result?: boolean;
+  subcategory?: string;
+  minWidth?: number;
   resolveOutputType?: (connectedInputTypes: Record<string, string>) => Record<string, string>;
 }
 

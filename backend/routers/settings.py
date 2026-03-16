@@ -1,4 +1,4 @@
-"""Settings and system prompt endpoints — 5 endpoints."""
+"""Settings and system prompt endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -12,16 +12,11 @@ from models.schemas import (
     StatusResponse,
     SystemPromptResponse,
 )
+from config import get_settings as get_app_settings
 from services.llm_service import get_llm_service
-from services.prompt_builder import PromptMode, build_prompt
-
-from dotenv import set_key
-from pathlib import Path
+from services.prompt_builder import PromptMode, build_prompt, get_prompt_sections
 
 router = APIRouter(prefix="/api", tags=["settings"])
-
-# config.py 기준 .env 경로
-ENV_PATH = Path("/app/biomni_repo/../.env")
 
 # DB keys
 _KEY_SETTINGS = "settings"
@@ -80,6 +75,7 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
         refusal_temp_decay=stored.get("refusal_temp_decay", 0.7),
         refusal_min_temp=stored.get("refusal_min_temp", 0.3),
         refusal_recovery_tokens=stored.get("refusal_recovery_tokens", 50),
+        use_compact_prompt=stored.get("use_compact_prompt", False),
     )
 
 
@@ -108,6 +104,8 @@ async def update_settings(
         current["refusal_min_temp"] = max(0.1, min(1.0, request.refusal_min_temp))
     if request.refusal_recovery_tokens is not None:
         current["refusal_recovery_tokens"] = max(10, min(200, request.refusal_recovery_tokens))
+    if request.use_compact_prompt is not None:
+        current["use_compact_prompt"] = request.use_compact_prompt
 
     await _upsert_setting(db, _KEY_SETTINGS, current)
 
@@ -153,9 +151,122 @@ async def set_system_prompt(
         await _delete_setting(db, _KEY_SYSTEM_PROMPT)
         return StatusResponse(status="ok", message="System prompt reset to default")
 
-@router.post("/api_keys")
-async def update_api_key(provider: str, api_key: str):
-    # 예: provider가 "OPENAI"라면 OPENAI_API_KEY 수정
-    env_key = f"{provider.upper()}_API_KEY"
-    set_key(str(ENV_PATH), env_key, api_key)
-    return {"status": "ok", "message": f"{env_key} updated in .env"}
+@router.get("/system_prompt/composed")
+async def get_composed_prompts(db: AsyncSession = Depends(get_db)):
+    """Return composed system prompts for each mode using the current model's token_format."""
+    svc = get_llm_service()
+    model_name = svc.get_current_model().name
+    behavior = await svc.resolve_model_behavior(db=db)
+    token_format = {
+        k: behavior.get(k)
+        for k in (
+            "think_format", "code_execute_format", "code_result_format",
+            "tool_result_format", "solution_format", "tool_calls_format",
+            "system_prompt",
+        )
+    }
+
+    modes = [
+        ("full", PromptMode.FULL),
+        ("agent", PromptMode.AGENT),
+        ("plan", PromptMode.PLAN),
+    ]
+
+    # Per-model custom prompts
+    all_stored = await _get_setting(db, "system_prompt_modes") or {}
+    model_stored = all_stored.get(model_name, {})
+
+    # Load dynamic content for accurate viewer display
+    app_settings = get_app_settings()
+    data_lake_path = app_settings.BIOMNI_DATA_PATH or ""
+
+    from services.biomni_tools import BiomniToolLoader
+    biomni_loader = BiomniToolLoader.get_instance()
+    if biomni_loader.is_initialized():
+        all_biomni = biomni_loader.get_all_tools()
+        tool_desc = biomni_loader.format_tool_desc(all_biomni[:30])
+        tool_desc += f"\n... ({len(all_biomni)} tools total, selected via retrieval at runtime)"
+    else:
+        tool_desc = "(Biomni tools not loaded)"
+
+    result = {}
+    for key, mode in modes:
+        sections = get_prompt_sections(mode, token_format)
+        composed = build_prompt(
+            mode,
+            token_format=token_format,
+            tool_desc=tool_desc,
+            data_lake_path=data_lake_path,
+        )
+        result[key] = {
+            "composed": composed,
+            "sections": sections,
+            "custom": model_stored.get(key, ""),
+        }
+    # Tool retrieval prompt (with placeholders for variable parts)
+    default_instruction = (
+        "You are an expert biomedical research assistant. Your task is to select "
+        "the relevant resources to help answer a user's query. Also, when using tools, "
+        "make sure to explain the reasons for using these tools and explain it concisely and rigorously."
+    )
+    if biomni_loader.is_initialized():
+        retrieval_prompt = biomni_loader.build_retrieval_prompt(
+            user_query="{user_query}",
+            plan_context="{plan_context}",
+        )
+        # Split into editable instruction vs read-only tool list
+        split_marker = "\nUSER QUERY:"
+        split_idx = retrieval_prompt.find(split_marker)
+        if split_idx >= 0:
+            instruction_part = retrieval_prompt[:split_idx]
+            readonly_part = retrieval_prompt[split_idx:]
+        else:
+            instruction_part = retrieval_prompt
+            readonly_part = ""
+    else:
+        instruction_part = default_instruction
+        readonly_part = "\nUSER QUERY: {user_query}\n\n(Biomni tools not loaded — tool list will appear here at runtime)"
+    result["tool_retrieval"] = {
+        "composed": instruction_part + readonly_part,
+        "sections": [
+            {"label": "System Instruction (editable)", "content": instruction_part},
+            {"label": "Runtime Variables & Tool List (auto-generated)", "content": readonly_part},
+        ],
+        "custom": model_stored.get("tool_retrieval", ""),
+        "editable_instruction": instruction_part,
+        "readonly_part": readonly_part,
+    }
+
+    result["model"] = model_name
+    return result
+
+
+@router.post("/system_prompt/composed")
+async def save_composed_prompt(
+    request: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Save a per-mode custom system prompt for the current model."""
+    mode = request.get("mode", "")
+    prompt = request.get("prompt", "")
+    if mode not in ("full", "agent", "plan"):
+        raise HTTPException(status_code=400, detail="Invalid mode")
+
+    svc = get_llm_service()
+    model_name = svc.get_current_model().name
+
+    all_stored = await _get_setting(db, "system_prompt_modes") or {}
+    model_stored = all_stored.get(model_name, {})
+
+    if prompt:
+        model_stored[mode] = prompt
+    else:
+        model_stored.pop(mode, None)
+
+    if model_stored:
+        all_stored[model_name] = model_stored
+    else:
+        all_stored.pop(model_name, None)
+
+    await _upsert_setting(db, "system_prompt_modes", all_stored)
+    return StatusResponse(status="ok", message=f"System prompt for {mode} ({model_name}) updated")

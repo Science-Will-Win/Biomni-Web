@@ -7,24 +7,24 @@ MODELS_DIR="$PARENT_DIR/models"
 mkdir -p "$MODELS_DIR"
 
 # Load model path from .env
-SGLANG_MODEL_PATH=""
+VLLM_MODEL_PATH=""
 if [ -f "$WORK_DIR/.env" ]; then
-    SGLANG_MODEL_PATH=$(grep -E '^SGLANG_MODEL_PATH=' "$WORK_DIR/.env" | cut -d'=' -f2-)
+    VLLM_MODEL_PATH=$(grep -E '^VLLM_MODEL_PATH=' "$WORK_DIR/.env" | cut -d'=' -f2-)
 fi
 
 # Resolve relative path (relative to WORK_DIR)
-if [[ "$SGLANG_MODEL_PATH" == ../* || "$SGLANG_MODEL_PATH" == ./* ]]; then
-    MODEL_PATH="$(cd "$WORK_DIR" && realpath -m "$SGLANG_MODEL_PATH")"
-elif [ -n "$SGLANG_MODEL_PATH" ]; then
-    MODEL_PATH="$SGLANG_MODEL_PATH"
+if [[ "$VLLM_MODEL_PATH" == ../* || "$VLLM_MODEL_PATH" == ./* ]]; then
+    MODEL_PATH="$(cd "$WORK_DIR" && realpath -m "$VLLM_MODEL_PATH")"
+elif [ -n "$VLLM_MODEL_PATH" ]; then
+    MODEL_PATH="$VLLM_MODEL_PATH"
 else
     MODEL_PATH="$MODELS_DIR/Ministral-3-3B-Reasoning-2512"
 fi
 
-# ─── Start SGLang model server ───
-start_sglang() {
+# ─── Start vLLM model server ───
+start_vllm() {
     echo "============================================"
-    echo "  SGLang Model Server"
+    echo "  vLLM Model Server"
     echo "  Models dir : $MODELS_DIR"
     echo "  Model path : $MODEL_PATH"
     echo "  Port       : 30000"
@@ -37,22 +37,26 @@ start_sglang() {
             --local-dir "$MODEL_PATH"
     fi
 
-    echo "Starting SGLang server..."
-    python -m sglang.launch_server \
-        --model-path "$MODEL_PATH" \
-        --port 30000 \
-        --host 0.0.0.0 &
-    SGLANG_PID=$!
-    echo "SGLang PID: $SGLANG_PID"
+    echo "Starting vLLM server..."
+    docker run --gpus all -d \
+        --name vllm-server \
+        -v "$MODELS_DIR:/app/models" \
+        -p 30000:8000 \
+        vllm/vllm-openai:latest \
+        --model "/app/models/$(basename "$MODEL_PATH")" \
+        --port 8000 \
+        --host 0.0.0.0
 
-    # Wait for SGLang to be ready
-    echo "Waiting for SGLang server..."
-    for i in $(seq 1 30); do
+    echo "vLLM container: vllm-server"
+
+    # Wait for vLLM to be ready
+    echo "Waiting for vLLM server..."
+    for i in $(seq 1 60); do
         if curl -s http://localhost:30000/health > /dev/null 2>&1; then
-            echo "SGLang server is ready!"
+            echo "vLLM server is ready!"
             break
         fi
-        sleep 2
+        sleep 5
     done
 }
 
@@ -66,18 +70,18 @@ start_backend() {
 
 # ─── Main ───
 case "${1:-all}" in
-    sglang)
-        start_sglang
+    vllm)
+        start_vllm
         ;;
     backend)
         start_backend
         ;;
     all)
-        start_sglang
+        start_vllm
         start_backend
         ;;
     *)
-        echo "Usage: $0 {sglang|backend|all}"
+        echo "Usage: $0 {vllm|backend|all}"
         exit 1
         ;;
 esac

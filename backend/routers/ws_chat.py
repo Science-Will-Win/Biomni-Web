@@ -50,10 +50,13 @@ async def websocket_chat(websocket: WebSocket, conv_id: str):
                 # Cancel the streaming task if running
                 if streaming_task and not streaming_task.done():
                     streaming_task.cancel()
-                await manager.send_event(
-                    conv_id,
-                    WSMessage(type=EventType.DONE, data={"stopped": True}),
-                )
+                    # CancelledError handler in _run_stream will send done
+                else:
+                    # No running task, send done directly
+                    await manager.send_event(
+                        conv_id,
+                        WSMessage(type=EventType.DONE, data={"stopped": True}),
+                    )
                 continue
 
             if action == "chat":

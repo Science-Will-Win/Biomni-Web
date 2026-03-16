@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback } from 'react';
-import { ChevronRight } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
 import { Sidebar } from '@/components/sidebar/Sidebar';
 import { ChatArea } from '@/components/chat/ChatArea';
 import { ChatHeader } from '@/components/chat/ChatHeader';
@@ -44,7 +44,7 @@ export function AppLayout() {
             onClick={() => dispatch({ type: 'TOGGLE_DETAIL_PANEL' })}
             title={t('tooltip.toggle_detail')}
           >
-            <ChevronRight size={16} />
+            <ChevronLeft size={16} />
           </button>
           {state.detailPanelOpen && (
             <>

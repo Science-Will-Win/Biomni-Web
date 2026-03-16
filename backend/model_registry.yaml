@@ -1,19 +1,19 @@
-# Model Registry — 9 models
+# Model Registry — 10 models
 # Token format mapping per model type
 
 models:
-  # ─── Local Models (SGLang) ───
+  # ─── Local Models (vLLM) ───
   biomni-r0-32b:
     type: local
-    provider: sglang
+    provider: vllm
     local_path: "biomni-r0-32b"
-    use_code_gen: false
     think_format: "<think>"
     code_execute_format: "<execute>"
     code_result_format: "<observation>"
     tool_result_format: "<observation>"
     solution_format: "<solution>"
     tool_calls_format: null
+    available_tools_format: "[AVAILABLE_TOOLS]"
     stop_sequences: ["</solution>"]
     refusal:
       enabled: true
@@ -26,18 +26,20 @@ models:
       estimator: "logprob"
       top_logprobs_num: 5
 
-  ministral-instruct:
+  ministral-reasoning:
     type: local
-    provider: sglang
+    provider: vllm
     local_path: "Ministral-3-3B-Reasoning-2512"
-    use_code_gen: true
+    use_llm_retrieval: true
     think_format: "[THINK]"
     code_execute_format: "[EXECUTE]"
     code_result_format: "[OBSERVATION]"
     tool_result_format: "[TOOL_RESULTS]"
-    solution_format: null
+    solution_format: "[SOLUTION]"
     tool_calls_format: "[TOOL_CALLS]...[ARGS]"
-    stop_sequences: ["[/EXECUTE]", "[/TOOL_RESULTS]", "[/OBSERVATION]"]
+    available_tools_format: "[AVAILABLE_TOOLS]"
+    stop_sequences:
+      ["[/EXECUTE]", "[/SOLUTION]", "[/TOOL_RESULTS]", "[/OBSERVATION]"]
     system_prompt: |
       You are Aigen R0, a helpful biomedical research assistant.
       You follow these instructions in all languages, and always respond to the user in the language they use or request.
@@ -61,15 +63,38 @@ models:
 
   aigen-r0:
     type: local
-    provider: sglang
+    provider: vllm
     local_path: "aigen-r0"
-    use_code_gen: false
     think_format: "[THINK]"
     code_execute_format: "[EXECUTE]"
     code_result_format: "[OBSERVATION]"
     tool_result_format: "[TOOL_RESULTS]"
     solution_format: "[SOLUTION]"
     tool_calls_format: "[TOOL_CALLS]...[ARGS]"
+    available_tools_format: "[AVAILABLE_TOOLS]"
+    stop_sequences: ["[/EXECUTE]", "[/SOLUTION]", "[/TOOL_RESULTS]"]
+    refusal:
+      enabled: true
+      threshold: 0.7
+      max_retries: 3
+      temp_decay: 0.7
+      min_temp: 0.3
+      recovery_tokens: 50
+      recovery_method: "temperature_decay"
+      estimator: "logprob"
+      top_logprobs_num: 5
+
+  aigen-r0-3b:
+    type: local
+    provider: vllm
+    local_path: "Aigen-R0-3B"
+    think_format: "[THINK]"
+    code_execute_format: "[EXECUTE]"
+    code_result_format: "[OBSERVATION]"
+    tool_result_format: "[TOOL_RESULTS]"
+    solution_format: "[SOLUTION]"
+    tool_calls_format: "[TOOL_CALLS]...[ARGS]"
+    available_tools_format: "[AVAILABLE_TOOLS]"
     stop_sequences: ["[/EXECUTE]", "[/SOLUTION]", "[/TOOL_RESULTS]"]
     refusal:
       enabled: true
@@ -86,7 +111,8 @@ models:
   gpt-4o:
     type: api
     provider: openai
-    use_code_gen: false
+    display_name: "GPT-4o"
+
     think_format: null
     code_execute_format: "<execute>"
     code_result_format: "<observation>"
@@ -100,7 +126,8 @@ models:
   gpt-4o-mini:
     type: api
     provider: openai
-    use_code_gen: false
+    display_name: "GPT-4o Mini"
+
     think_format: null
     code_execute_format: "<execute>"
     code_result_format: "<observation>"
@@ -114,7 +141,8 @@ models:
   claude-sonnet-4-5:
     type: api
     provider: anthropic
-    use_code_gen: false
+    display_name: "Claude Sonnet 4.5"
+
     think_format: null
     code_execute_format: "<execute>"
     code_result_format: "<observation>"
@@ -128,7 +156,8 @@ models:
   claude-haiku-4-5:
     type: api
     provider: anthropic
-    use_code_gen: false
+    display_name: "Claude Haiku 4.5"
+
     think_format: null
     code_execute_format: "<execute>"
     code_result_format: "<observation>"
@@ -142,7 +171,8 @@ models:
   gemini-2.0-flash:
     type: api
     provider: gemini
-    use_code_gen: false
+    display_name: "Gemini 2.0 Flash"
+
     think_format: null
     code_execute_format: "<execute>"
     code_result_format: "<observation>"
@@ -156,7 +186,8 @@ models:
   gemini-2.5-pro:
     type: api
     provider: gemini
-    use_code_gen: false
+    display_name: "Gemini 2.5 Pro"
+
     think_format: null
     code_execute_format: "<execute>"
     code_result_format: "<observation>"

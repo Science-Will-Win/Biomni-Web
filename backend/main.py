@@ -1,6 +1,7 @@
 """aigen_server — Lightweight API Gateway for Biomni A1"""
 
 import os
+import sys
 import logging
 from contextlib import asynccontextmanager
 
@@ -11,6 +12,20 @@ from dotenv import load_dotenv
 
 # A1이 사용할 수 있도록 환경변수 강제 로드
 load_dotenv(dotenv_path="../.env", override=True)
+
+# --- Monkey Patching: LangChain compatibility ---
+import langchain_core.callbacks
+import langchain_core.callbacks.base
+import langchain_core.agents
+import langchain_core.documents
+import langchain_core.messages
+import langchain_core.outputs
+
+sys.modules["langchain.callbacks"] = langchain_core.callbacks
+sys.modules["langchain.callbacks.base"] = langchain_core.callbacks.base
+sys.modules["langchain.schema"] = langchain_core.messages
+sys.modules["langchain.schema.agent"] = langchain_core.agents
+sys.modules["langchain.schema.document"] = langchain_core.documents
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("biomni_backend")
@@ -34,6 +49,22 @@ async def lifespan(app: FastAPI):
         logger.info("LLM Service initialized successfully.")
     except Exception as e:
         logger.error(f"LLM Service init failed: {e}")
+
+    try:
+        from services.biomni_tools import BiomniToolLoader
+        biomni_loader = BiomniToolLoader.get_instance()
+        biomni_loader.initialize()
+        logger.info("BiomniToolLoader initialized successfully.")
+    except Exception as e:
+        logger.warning(f"BiomniToolLoader init skipped: {e}")
+
+    # Initialize Biomni Tool Loader (loads 224 tool descriptions from biomni framework)
+    try:
+        from services.biomni_tools import BiomniToolLoader
+        biomni_loader = BiomniToolLoader.get_instance()
+        biomni_loader.initialize()
+    except Exception as e:
+        logger.warning(f"BiomniToolLoader init failed: {e}")
 
     yield
 
@@ -61,7 +92,24 @@ app.add_middleware(
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "agent": "Biomni A1 Active"}
+    from services.llm_service import get_llm_service
+    from db.database import async_session_factory
+    from sqlalchemy import text
+
+    # vLLM health
+    svc = get_llm_service()
+    vllm_ok = await svc._check_vllm_health()
+
+    # DB health
+    db_ok = False
+    try:
+        async with async_session_factory() as db:
+            await db.execute(text("SELECT 1"))
+            db_ok = True
+    except Exception:
+        pass
+
+    return {"status": "ok", "vllm": vllm_ok, "db": db_ok}
 
 uploads_dir = os.getenv("UPLOADS_DIR", "/app/uploads")
 if os.path.exists(uploads_dir):
@@ -85,8 +133,8 @@ app.include_router(chat_sse.router)
 app.include_router(models_router.router)
 app.include_router(plan.router)
 app.include_router(settings.router)
-app.include_router(tools_router.router)
 app.include_router(files.router)
+app.include_router(tools_router.router)
 app.include_router(ws_chat.router)
 
 if __name__ == "__main__":

@@ -1,210 +1,233 @@
-import { useState } from 'react';
-import { useAppContext } from '@/context/AppContext';
-import { useChatContext } from '@/context/ChatContext';
-import { useWebSocket } from '@/context/WebSocketContext';
-import { useTranslation } from '@/i18n';
-import { truncateConversation } from '@/api/conversations';
-import type { ToolCallEvent, ToolResultEvent, DetailPanelData, PlanStepResult, PlanComplete } from '@/types';
+import { useState, useEffect } from "react";
+import { useAppContext } from "@/context/AppContext";
+import { useChatContext } from "@/context/ChatContext";
+import { useWebSocket } from "@/context/WebSocketContext";
+import { useTranslation } from "@/i18n";
+import { truncateConversation } from "@/api/conversations";
+import { listStepOutputs, getStepOutputUrl } from "@/api/files";
+import { MarkdownContent } from "@/utils/MarkdownContent";
+import type {
+  ToolCallEvent,
+  ToolResultEvent,
+  DetailPanelData,
+  PlanStepResult,
+} from "@/types";
 
 interface Props {
-  toolCalls: ToolCallEvent['tool_call'][];
-  toolResults?: ToolResultEvent['tool_result'][];
-  planComplete?: PlanComplete;
+  toolCalls: ToolCallEvent["tool_call"][];
+  toolResults?: ToolResultEvent["tool_result"][];
   messageIndex: number;
 }
 
 interface PlanStepDisplay {
   name: string;
   description: string;
-  status: 'pending' | 'running' | 'completed' | 'error' | 'stopped';
+  status: "pending" | "running" | "completed" | "error" | "stopped";
   tool?: string;
 }
 
 /** Map backend tool identifiers to human-readable labels */
 const TOOL_LABELS: Record<string, string> = {
-  code_gen: '코드 생성',
-  create_plan: '플랜 생성',
-  web_search: '웹 검색',
+  code_gen: "코드 생성",
+  create_plan: "플랜 생성",
+  web_search: "웹 검색",
 };
 
 function getToolLabel(tool?: string): string {
-  if (!tool) return '';
+  if (!tool) return "";
   return TOOL_LABELS[tool] ?? tool;
 }
 
 /**
  * Plan Steps Box — renders create_plan tool call as a summary plan card
  * in the chat message.
- *
- * Features:
- * - Click entire box → switch Detail Panel to this plan's data
- * - Inline step results with toggle (▼/▲)
- * - Step hover actions: Retry (⟳), Ask (?), Detail (→)
- * - Goal header: Ask About Plan (?), Regenerate Plan (↻)
- * - Active plan highlighted with .plan-box-active CSS class
- * - Running indicator: number + CSS pulse animation (not ⟳ character)
  */
-// frontend/src/components/chat/PlanStepsBox.tsx
-
-export function PlanStepsBox({ toolCalls, toolResults, planComplete, messageIndex }: Props) {
+export function PlanStepsBox({ toolCalls, toolResults, messageIndex }: Props) {
   const { state: appState, dispatch: appDispatch } = useAppContext();
   const { state: chatState, dispatch: chatDispatch } = useChatContext();
   const { sendMessage, sendRaw } = useWebSocket();
   const { t } = useTranslation();
 
-  const createPlanCall = toolCalls?.find((tc) => tc.name === 'create_plan');
-  const tcArgs = createPlanCall?.arguments as any;
+  // Find create_plan tool call
+  const createPlanCall = toolCalls.find((tc) => tc.name === "create_plan");
+  if (!createPlanCall) return null;
 
-  // 1. 데이터 안전 추출 (중첩 객체, 문자열 JSON 등 모든 엣지 케이스 방어)
-  let rawGoal = 'Plan';
-  let rawSteps: any[] = [];
-  let rawResults: any[] = [];
+  const args = createPlanCall.arguments as {
+    goal?: string;
+    steps?: Array<{ name: string; description?: string }>;
+  };
 
-  const pc = planComplete as any;
-  if (pc && typeof pc === 'object') {
-    rawGoal = pc.goal || pc.plan?.goal || tcArgs?.goal || 'Plan';
-    rawSteps = pc.steps || pc.plan?.steps || tcArgs?.steps;
-    rawResults = pc.results || pc.plan?.results;
-  } else if (tcArgs) {
-    rawGoal = tcArgs.goal || 'Plan';
-    rawSteps = tcArgs.steps;
-  }
+  if (!args?.steps?.length) return null;
 
-  // LLM이 배열을 문자열(String)로 내려보낸 경우 파싱 처리
-  if (typeof rawSteps === 'string') {
-    try { rawSteps = JSON.parse(rawSteps); } catch(e) { rawSteps = []; }
-  }
-  if (typeof rawResults === 'string') {
-    try { rawResults = JSON.parse(rawResults); } catch(e) { rawResults = []; }
-  }
-
-  // steps 데이터가 정상적인 배열이 아니면 렌더링 중단 (MessageBubble이 알아서 원본 텍스트 노출함)
-  if (!Array.isArray(rawSteps) || rawSteps.length === 0) return null;
-
-  const args = { goal: rawGoal, steps: rawSteps };
+  // Merge with live detail panel data for step statuses + tools
   const panelSteps = appState.detailPanelData?.steps;
   const panelResults = appState.detailPanelData?.results;
 
-  const steps: PlanStepDisplay[] = args.steps.map((s: any, i: number) => {
+  const steps: PlanStepDisplay[] = args.steps.map((s, i) => {
     const liveStatus = panelSteps?.[i]?.status;
     const liveTool = panelSteps?.[i]?.tool;
-    const pcStep = Array.isArray(rawSteps) ? rawSteps[i] : undefined;
-    const trResult = toolResults?.find((tr) => tr.step === i + 1);
-    const pcResult = Array.isArray(rawResults) ? rawResults.find((r: any) => r.step === i + 1) : undefined;
-    const stepResult = trResult || pcResult;
+    const stepResult = toolResults?.find((tr) => tr.step === i + 1);
 
-    let status: PlanStepDisplay['status'] = 'pending';
+    let status: PlanStepDisplay["status"] = "pending";
     if (liveStatus) {
       status = liveStatus;
-    } else if (pcStep?.status) {
-      status = pcStep.status;
     } else if (stepResult) {
-      status = stepResult.success ? 'completed' : 'error';
+      status = stepResult.success ? "completed" : "error";
     }
 
     return {
-      name: s.name || `Step ${i + 1}`,
-      description: s.description || '',
+      name: s.name,
+      description: s.description || "",
       status,
-      tool: liveTool || pcStep?.tool || stepResult?.tool,
+      tool: liveTool || stepResult?.tool,
     };
   });
 
+  // Merge results from two sources: props (message history) + AppContext (live)
   const getStepResults = (stepNum: number): PlanStepResult[] => {
-    const fromState = panelResults?.filter(r => r.step === stepNum) || [];
+    const fromState = panelResults?.filter((r) => r.step === stepNum) || [];
     if (fromState.length > 0) return fromState;
-
-    if (Array.isArray(rawResults)) {
-      const fromPlanComplete = rawResults.filter((r: any) => r.step === stepNum);
-      if (fromPlanComplete.length > 0) return fromPlanComplete;
-    }
-
-    return (toolResults?.filter(tr => tr.step === stepNum) || []).map(tr => ({
-      step: tr.step ?? 0,
-      tool: tr.tool,
-      success: tr.success,
-      result: tr.result,
-    }));
+    return (toolResults?.filter((tr) => tr.step === stepNum) || []).map(
+      (tr) => ({
+        step: tr.step ?? 0,
+        tool: tr.tool,
+        success: tr.success,
+        result: tr.result,
+      }),
+    );
   };
 
   const handleMoreDetail = () => {
-    const currentMessage = chatState.messages[messageIndex];
-    const rawContent = currentMessage?.content || '';
-
-    const formattedAnalysis = rawContent
-      .replace(/<think>/g, '### 🤔 Thought Process\n\n')
-      .replace(/<\/think>/g, '\n\n---\n\n### 📋 Generated Plan\n\n');
-
-    const resultsArray = (Array.isArray(rawResults) && rawResults.length > 0) 
-      ? rawResults 
-      : (toolResults?.map(tr => ({
-          step: tr.step ?? 0,
-          tool: tr.tool,
-          success: tr.success,
-          result: tr.result,
-        })) || []);
-
     const planData: DetailPanelData = {
-      goal: args.goal,
-      steps: steps.map(s => ({
+      goal: args.goal || "Plan",
+      steps: steps.map((s) => ({
         name: s.name,
         description: s.description,
         status: s.status,
         tool: s.tool,
       })),
-      results: resultsArray,
+      results: (toolResults || [])
+        .filter((tr) => tr.step != null && tr.step > 0)
+        .map((tr) => ({
+          step: tr.step!,
+          tool: tr.tool,
+          success: tr.success,
+          result: tr.result,
+        })),
       codes: {},
-      analysis: formattedAnalysis,
+      analysis: "",
       currentStep: steps.length,
     };
-    
-    resultsArray.forEach((tr: any) => {
-      const resData = tr.result as Record<string, unknown>;
-      if (resData && typeof resData === 'object' && resData.code && tr.step != null) {
-        planData.codes[tr.step - 1] = String(resData.code);
+    toolResults?.forEach((tr) => {
+      const res = tr.result as Record<string, unknown> | undefined;
+      if (res && typeof res === "object" && res.code && tr.step != null) {
+        planData.codes[tr.step - 1] = {
+          code: String(res.code),
+          language: String(res.language || "python"),
+          execution: res.execution as Record<string, unknown> | undefined,
+          fixAttempts: (res.fix_attempts as number) || 0,
+          stepIndex: tr.step - 1,
+          ...(Array.isArray(res.segments)
+            ? { segments: res.segments as import("@/types").CodeSegment[] }
+            : {}),
+        };
       }
     });
-    
-    appDispatch({ type: 'SET_DETAIL_PANEL_DATA', payload: planData });
-    appDispatch({ type: 'SET_ACTIVE_DETAIL_TAB', payload: 'plan' });
+    appDispatch({ type: "SET_DETAIL_PANEL_DATA", payload: planData });
+    appDispatch({ type: "SET_ACTIVE_DETAIL_TAB", payload: "outputs" });
   };
 
-  const isActive = appState.detailPanelData?.goal === args.goal &&
+  // Check if this plan box is currently active
+  const isActive =
+    appState.detailPanelData?.goal === (args.goal || "Plan") &&
     appState.detailPanelData?.steps?.length === steps.length;
 
   // Step action handlers
   const handleRetryStep = (stepIndex: number) => {
     const convId = chatState.conversationId;
     if (!convId) return;
-    sendRaw('chat', {
+    sendRaw("chat", {
       conv_id: convId,
-      message: '',
-      mode: 'plan',
+      message: "",
+      mode: "plan",
       rerun: true,
-      rerun_steps: [{ name: steps[stepIndex].name, description: steps[stepIndex].description }],
-      rerun_goal: args.goal,
+      rerun_steps: [
+        {
+          name: steps[stepIndex].name,
+          description: steps[stepIndex].description,
+        },
+      ],
+      rerun_goal: args.goal || "",
       retry_step: stepIndex + 1,
     });
   };
 
   const handleAskStep = (stepIndex: number) => {
     const step = steps[stepIndex];
+    const stepResults = getStepResults(stepIndex + 1);
+    const context = stepResults
+      .map((r) => JSON.stringify(r.result))
+      .join("\n")
+      .slice(0, 500);
+
+    // Collect previous step results summary
+    const previousSteps = (panelResults || [])
+      .filter((r) => r.step < stepIndex + 1 && r.step > 0)
+      .map((r) => {
+        const res = r.result as Record<string, unknown> | null;
+        return `Step ${r.step}: ${res?.title || res?.summary || "completed"}`;
+      });
+
+    const planGoal = args.goal || "";
+    const planStepNames = steps.map((s) => s.name);
+
     chatDispatch({
-      type: 'ADD_STEP_QUESTION',
+      type: "ADD_STEP_QUESTION",
       payload: {
         stepNum: stepIndex + 1,
-        tool: step.tool || '',
+        tool: step.tool || "",
         stepName: step.name,
-        context: step.description,
+        context,
+        previousSteps,
+        planGoal,
+        planSteps: planStepNames,
       },
     });
+  };
+
+  const handleEditStep = (stepIndex: number) => {
+    // Edit step result — stored in localStorage
+    const key = `step-edit-${chatState.conversationId}-${stepIndex}`;
+    const stepResults = getStepResults(stepIndex + 1);
+    const currentText = stepResults
+      .map((r) => {
+        const res = r.result as Record<string, unknown> | string;
+        if (typeof res === "string") return res;
+        return res?.summary || res?.text || JSON.stringify(res, null, 2);
+      })
+      .join("\n");
+
+    const edited = prompt(
+      "Edit step result:",
+      localStorage.getItem(key) || String(currentText),
+    );
+    if (edited !== null) {
+      localStorage.setItem(key, edited);
+    }
   };
 
   // Goal action handlers
   const handleAskPlan = () => {
     chatDispatch({
-      type: 'ADD_STEP_QUESTION',
-      payload: { stepNum: 0, tool: '', stepName: args.goal, context: '' },
+      type: "ADD_STEP_QUESTION",
+      payload: {
+        stepNum: 0,
+        tool: "",
+        stepName: args.goal || "Plan",
+        context: "",
+        planGoal: args.goal || "",
+        planSteps: steps.map((s) => s.name),
+      },
     });
   };
 
@@ -214,31 +237,120 @@ export function PlanStepsBox({ toolCalls, toolResults, planComplete, messageInde
 
     const userIdx = messageIndex - 1;
     const userMsg = chatState.messages[userIdx];
-    if (!userMsg || userMsg.role !== 'user') return;
+    if (!userMsg || userMsg.role !== "user") return;
 
     await truncateConversation(convId, userIdx).catch(() => {});
-    chatDispatch({ type: 'TRUNCATE_FROM', payload: userIdx });
-    appDispatch({ type: 'CLEAR_DETAIL_PANEL' });
+    chatDispatch({ type: "TRUNCATE_FROM", payload: userIdx });
+    appDispatch({ type: "CLEAR_DETAIL_PANEL" });
 
     const files = userMsg.files?.map((f) => ({
-      file: new File([], (f.name as string) || ''),
-      name: (f.name as string) || '',
-      type: (f.type as 'image' | 'audio' | 'document') || 'document',
-      uploadedFilename: (f.uploadId as string) || '',
+      file: new File([], (f.name as string) || ""),
+      name: (f.name as string) || "",
+      type: (f.type as "image" | "audio" | "document") || "document",
+      uploadedFilename: (f.uploadId as string) || "",
     }));
     sendMessage(userMsg.content, files);
   };
 
+  // Extract solution text from results
+  const allResults = (toolResults || []).map((tr) => ({
+    step: tr.step ?? 0,
+    tool: tr.tool,
+    success: tr.success,
+    result: tr.result,
+  }));
+  const solutionResult = allResults.find((r) => {
+    const d = r.result as Record<string, unknown> | null;
+    return (
+      d &&
+      typeof d === "object" &&
+      typeof (d as Record<string, unknown>).solution === "string"
+    );
+  });
+  let solutionText = solutionResult
+    ? String((solutionResult.result as Record<string, unknown>).solution)
+    : null;
+
+  // Fallback: parse [SOLUTION]...[/SOLUTION] or <solution>...</solution> from text_fallback results
+  if (!solutionText) {
+    const lastText = [...allResults].reverse().find((r) => {
+      const d = r.result as Record<string, unknown> | null;
+      return (
+        d &&
+        typeof d === "object" &&
+        typeof (d as Record<string, unknown>).text === "string"
+      );
+    });
+    if (lastText) {
+      const text = String((lastText.result as Record<string, unknown>).text);
+      const m =
+        text.match(/\[SOLUTION\]([\s\S]*?)\[\/SOLUTION\]/) ||
+        text.match(/<solution>([\s\S]*?)<\/solution>/i) ||
+        text.match(/<solution>([\s\S]+)$/i) ||
+        text.match(/\[SOLUTION\]([\s\S]+)$/);
+      if (m) solutionText = m[1].trim();
+    }
+  }
+
+  const toolRetrievalStatus = appState.detailPanelData?.toolRetrievalStatus;
+  const retrievalResult = appState.detailPanelData?.retrievalResult;
+
+  // Analysis status
+  const analysisStatus = (() => {
+    if (appState.detailPanelData?.analysis) return "done";
+    const lastStep = steps[steps.length - 1];
+    if (lastStep?.status === "stopped") return "stopped";
+    const allDone = steps.every(
+      (s) => s.status === "completed" || s.status === "error",
+    );
+    if (allDone && steps.length > 0) return "running";
+    return "pending";
+  })();
+
   return (
     <div
-      className={`plan-steps-box${isActive ? ' plan-box-active' : ''}`}
+      className={`plan-steps-box${isActive ? " plan-box-active" : ""}`}
       onClick={handleMoreDetail}
     >
       <div className="plan-goal plan-goal-row">
-        <span className="plan-goal-text">{args.goal}</span>
+        <span className="plan-goal-text">{args.goal || "Plan"}</span>
         <div className="plan-goal-actions">
-          <button className="plan-ref-btn" onClick={(e) => { e.stopPropagation(); handleAskPlan(); }} title={t('tooltip.plan_ref') || 'Ask about this plan'}>?</button>
-          <button className="plan-regen-btn" onClick={(e) => { e.stopPropagation(); handleRegenPlan(); }} title={t('tooltip.regenerate_plan') || 'Regenerate plan'}>↻</button>
+          <button
+            className="plan-ref-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleAskPlan();
+            }}
+            title={t("tooltip.plan_ref") || "Ask about this plan"}
+          >
+            ?
+          </button>
+          <button
+            className="plan-regen-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleRegenPlan();
+            }}
+            title={t("tooltip.regenerate_plan") || "Regenerate plan"}
+          >
+            ↻
+          </button>
+        </div>
+        <div
+          className={`plan-tool-retrieval-row${toolRetrievalStatus === "running" ? " running" : ""}${toolRetrievalStatus === "done" ? " done" : ""}`}
+        >
+          {(toolRetrievalStatus === "running" ||
+            toolRetrievalStatus === "done") && (
+            <>
+              {toolRetrievalStatus === "running" && (
+                <span className="analyzing-spinner" />
+              )}
+              {toolRetrievalStatus === "done" && (
+                <span className="analyzing-check">✓</span>
+              )}
+              <span>{t("label.tool_retrieval")}</span>
+            </>
+          )}
         </div>
       </div>
       <div className="plan-steps">
@@ -248,13 +360,46 @@ export function PlanStepsBox({ toolCalls, toolResults, planComplete, messageInde
             step={step}
             index={i}
             stepResults={getStepResults(i + 1)}
-            onMoreDetail={handleMoreDetail}
             onRetry={handleRetryStep}
             onAsk={handleAskStep}
-            moreDetailLabel={t('label.more_detail')}
+            onEdit={handleEditStep}
+            convId={chatState.conversationId}
           />
         ))}
       </div>
+      {/* Analysis row */}
+      <div
+        className={`plan-analyzing-row${analysisStatus === "done" ? " plan-analyzing-done" : ""}${analysisStatus === "stopped" ? " plan-analyzing-stopped" : ""}`}
+      >
+        {analysisStatus === "done" && (
+          <span className="analyzing-check">✓</span>
+        )}
+        {analysisStatus === "running" && <span className="analyzing-spinner" />}
+        {analysisStatus === "pending" && (
+          <span className="analyzing-icon">◎</span>
+        )}
+        {analysisStatus === "stopped" && (
+          <span className="analyzing-icon">◼</span>
+        )}
+        <span>
+          {analysisStatus === "done"
+            ? t("status.analysis_complete") || "Analysis Complete"
+            : "Analysis"}
+        </span>
+      </div>
+      {solutionText && (
+        <div className="plan-solution-box" onClick={(e) => e.stopPropagation()}>
+          <span
+            className="section-label-minimal"
+            style={{ color: "var(--accent-green, #4CAF50)" }}
+          >
+            Solution
+          </span>
+          <div className="step-brief-summary">
+            <MarkdownContent text={solutionText} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -265,24 +410,38 @@ interface PlanStepItemProps {
   step: PlanStepDisplay;
   index: number;
   stepResults: PlanStepResult[];
-  onMoreDetail: () => void;
   onRetry: (index: number) => void;
   onAsk: (index: number) => void;
-  moreDetailLabel: string;
+  onEdit: (index: number) => void;
+  convId: string | null;
 }
 
-function PlanStepItem({ step, index, stepResults, onMoreDetail, onRetry, onAsk, moreDetailLabel }: PlanStepItemProps) {
+function PlanStepItem({
+  step,
+  index,
+  stepResults,
+  onRetry,
+  onAsk,
+  onEdit,
+  convId,
+}: PlanStepItemProps) {
   const [expanded, setExpanded] = useState(true);
+  const { dispatch: appDispatch } = useAppContext();
   const hasResults = stepResults.length > 0;
 
   // Indicator: running keeps the number (CSS handles animation), others use symbols
   const indicator = (() => {
     switch (step.status) {
-      case 'completed': return '✓';
-      case 'error': return '!';
-      case 'stopped': return '◼';
-      case 'running': return index + 1;   // number + CSS pulse/spinner
-      default: return index + 1;           // pending: number
+      case "completed":
+        return "✓";
+      case "error":
+        return "!";
+      case "stopped":
+        return "◼";
+      case "running":
+        return index + 1;
+      default:
+        return index + 1;
     }
   })();
 
@@ -292,37 +451,81 @@ function PlanStepItem({ step, index, stepResults, onMoreDetail, onRetry, onAsk, 
   };
 
   return (
-    <div className={`plan-step ${step.status}`} onClick={(e) => e.stopPropagation()}>
+    <div
+      className={`plan-step ${step.status}`}
+      onClick={(e) => e.stopPropagation()}
+    >
       <div className="step-header">
-        <div className="step-header-main" onClick={handleToggle} style={{ cursor: hasResults ? 'pointer' : 'default' }}>
+        <div
+          className="step-header-main"
+          onClick={handleToggle}
+          style={{ cursor: hasResults ? "pointer" : "default" }}
+        >
           <div className="step-indicator">{indicator}</div>
           <div className="step-content">
             <div className="step-name">{step.name}</div>
-            {step.description && step.description !== step.name && (
+            {step.description && (
               <div className="step-description">{step.description}</div>
             )}
-            {(step.tool || step.status === 'running') && (
+            {step.tool && (
               <div className="step-tool">{getToolLabel(step.tool)}</div>
             )}
           </div>
         </div>
-        {(step.status === 'completed' || step.status === 'error') && (
-          <div className="step-actions">
-            <button className="step-action-btn" onClick={() => onRetry(index)} title="Retry">⟳</button>
-            <button className="step-action-btn" onClick={() => onAsk(index)} title="Ask">?</button>
-            <button className="step-action-btn" onClick={onMoreDetail} title={moreDetailLabel}>→</button>
-          </div>
-        )}
-        {hasResults && (
-          <div className="step-toggle" onClick={handleToggle}>
-            {expanded ? '▲' : '▼'}
-          </div>
-        )}
+        {/* step-actions: always rendered, CSS opacity controls visibility */}
+        <div className="step-actions">
+          <button
+            className="step-action-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRetry(index);
+            }}
+            title="Retry"
+          >
+            ↻
+          </button>
+          <button
+            className="step-action-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit(index);
+            }}
+            title="Edit"
+          >
+            ✎
+          </button>
+          <button
+            className="step-action-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAsk(index);
+            }}
+            title="Ask"
+          >
+            ?
+          </button>
+        </div>
+        {/* step-toggle: always rendered, visibility controlled by hasResults */}
+        <div
+          className="step-toggle"
+          style={{ visibility: hasResults ? "visible" : "hidden" }}
+          onClick={handleToggle}
+        >
+          {expanded ? "▲" : "▼"}
+        </div>
       </div>
       {/* Inline step result */}
       {hasResults && (
-        <div className="step-result" style={{ display: expanded ? 'block' : 'none' }}>
-          <StepResultContent results={stepResults} />
+        <div
+          className="step-result"
+          style={{ display: expanded ? "block" : "none" }}
+        >
+          <StepResultContent
+            results={stepResults}
+            stepIndex={index}
+            convId={convId}
+            appDispatch={appDispatch}
+          />
         </div>
       )}
     </div>
@@ -331,55 +534,197 @@ function PlanStepItem({ step, index, stepResults, onMoreDetail, onRetry, onAsk, 
 
 // ─── Step Result Rendering ───
 
-function StepResultContent({ results }: { results: PlanStepResult[] }) {
+interface StepResultContentProps {
+  results: PlanStepResult[];
+  stepIndex: number;
+  convId: string | null;
+  appDispatch: React.Dispatch<import("@/context/AppContext").AppAction>;
+}
+
+function StepResultContent({
+  results,
+  stepIndex,
+  convId,
+  appDispatch,
+}: StepResultContentProps) {
   return (
     <>
       {results.map((r, i) => (
         <div key={i}>
           {i > 0 && <hr className="tool-result-divider" />}
-          <SingleResultView result={r} />
+          <SingleResultView
+            result={r}
+            stepIndex={stepIndex}
+            convId={convId}
+            appDispatch={appDispatch}
+          />
         </div>
       ))}
     </>
   );
 }
 
-function SingleResultView({ result }: { result: PlanStepResult }) {
-  const data = result.result as Record<string, unknown> | string | null | undefined;
+interface SingleResultViewProps {
+  result: PlanStepResult;
+  stepIndex: number;
+  convId: string | null;
+  appDispatch: React.Dispatch<import("@/context/AppContext").AppAction>;
+}
+
+function SingleResultView({
+  result,
+  stepIndex,
+  convId,
+  appDispatch,
+}: SingleResultViewProps) {
+  const { t } = useTranslation();
+  const data = result.result as
+    | Record<string, unknown>
+    | string
+    | null
+    | undefined;
 
   // Error result
   if (!result.success) {
     if (!data) return <div className="step-error">Error</div>;
-    const errMsg = typeof data === 'object' && data !== null && 'error' in data
-      ? String((data as Record<string, unknown>).error)
-      : typeof data === 'string' ? data : JSON.stringify(data);
+    const errMsg =
+      typeof data === "object" && data !== null && "error" in data
+        ? String((data as Record<string, unknown>).error)
+        : typeof data === "string"
+          ? data
+          : JSON.stringify(data);
     return <div className="step-error">{errMsg}</div>;
   }
 
   // String result
-  if (typeof data === 'string') {
-    const truncated = data.length > 300 ? data.slice(0, 300) + '...' : data;
+  if (typeof data === "string") {
+    const truncated = data.length > 300 ? data.slice(0, 300) + "..." : data;
     return <div className="result-text">{truncated}</div>;
   }
 
   // Object result
-  if (typeof data === 'object' && data !== null) {
+  if (typeof data === "object" && data !== null) {
     const obj = data as Record<string, unknown>;
+
+    // Think block
+    const thinkContent = obj.thought || obj.thinking;
+    const thinkBlock =
+      thinkContent && typeof thinkContent === "string" ? (
+        <ThinkBlock content={thinkContent} />
+      ) : null;
+
+    // Text fallback result (skip if code exists — handled below)
+    if (typeof obj.text === "string" && !obj.code) {
+      let displayText = (obj.text as string)
+        // Strip execute blocks: closed, or unclosed (up to next observation/execute/end)
+        .replace(/<execute>[\s\S]*?<\/execute>/gi, "")
+        .replace(/<execute>[\s\S]*?(?=<observation>|<execute>|$)/gi, "")
+        .replace(/\[EXECUTE\][\s\S]*?\[\/EXECUTE\]/g, "")
+        .replace(/\[EXECUTE\][\s\S]*?(?=\[OBSERVATION\]|\[EXECUTE\]|$)/g, "")
+        // Strip observation tags (extract inner content or remove)
+        .replace(/<observation>[\s\S]*?<\/observation>/gi, "")
+        .replace(/\[OBSERVATION\][\s\S]*?\[\/OBSERVATION\]/g, "")
+        .replace(/<observation>[\s\S]*$/gi, "")
+        .replace(/\[OBSERVATION\][\s\S]*$/g, "")
+        // Strip solution/think blocks
+        .replace(/<solution>[\s\S]*?<\/solution>/gi, "")
+        .replace(/\[SOLUTION\][\s\S]*?\[\/SOLUTION\]/g, "")
+        .replace(/<solution>[\s\S]*$/gi, "")
+        .replace(/\[SOLUTION\][\s\S]*$/g, "")
+        .replace(/\[THINK\][\s\S]*?\[\/THINK\]/g, "")
+        .replace(/<think>[\s\S]*?<\/think>/gi, "")
+        .replace(/<think>[\s\S]*$/gi, "")
+        .replace(/<\/think>/gi, "")
+        .trim();
+      if (!displayText) {
+        return thinkBlock ? (
+          <div className="step-section-minimal">{thinkBlock}</div>
+        ) : null;
+      }
+      const truncated =
+        displayText.length > 500
+          ? displayText.slice(0, 500) + "..."
+          : displayText;
+      return (
+        <div className="step-section-minimal">
+          {thinkBlock}
+          <div className="step-brief-summary">
+            <MarkdownContent text={truncated} />
+          </div>
+        </div>
+      );
+    }
+
+    // Solution result
+    if (typeof obj.solution === "string") {
+      return (
+        <div className="step-section-minimal">
+          {thinkBlock}
+          <span className="section-label-minimal">Solution</span>
+          <div className="step-brief-summary">
+            <MarkdownContent text={String(obj.solution)} />
+          </div>
+        </div>
+      );
+    }
 
     // Code generation result
     if (obj.code) {
       const code = String(obj.code);
-      const lineCount = code.split('\n').length;
-      const lang = String(obj.language || 'python');
+      const lineCount = code.split("\n").length;
+      const lang = String(obj.language || "python");
       const fixAttempts = obj.fix_attempts as number | undefined;
+      const reasoning =
+        typeof obj.reasoning === "string" ? obj.reasoning : undefined;
+      const importCorrections = obj.import_corrections as string[] | undefined;
       return (
         <div className="step-section-minimal">
-          <span className="section-label-minimal">Code Generated</span>
-          <div className="code-gen-summary">{lineCount} lines · {lang}</div>
-          {fixAttempts != null && fixAttempts > 0 && (
-            <div className="code-fix-info">Auto-corrected ({fixAttempts} attempt{fixAttempts > 1 ? 's' : ''})</div>
+          {thinkBlock}
+          {reasoning && (
+            <div className="step-brief-summary">
+              <MarkdownContent
+                text={
+                  reasoning.length > 500
+                    ? reasoning.slice(0, 500) + "..."
+                    : reasoning
+                }
+              />
+            </div>
           )}
-          {obj.execution ? <ExecutionResultView execution={obj.execution as Record<string, unknown>} /> : null}
+          {importCorrections && importCorrections.length > 0 && (
+            <div className="import-corrections">
+              {importCorrections.map((c, i) => (
+                <span key={i} className="import-correction-item">
+                  Import fixed: {c}
+                </span>
+              ))}
+            </div>
+          )}
+          <span className="section-label-minimal">Code Generated</span>
+          <div className="code-gen-summary">
+            {lineCount} lines of {lang}
+            <button
+              className="step-more-detail-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                appDispatch({ type: "SET_ACTIVE_DETAIL_TAB", payload: "code" });
+              }}
+            >
+              (view in Code tab)
+            </button>
+          </div>
+          {fixAttempts != null && fixAttempts > 0 && (
+            <div className="code-fix-info">
+              Auto-corrected ({fixAttempts} attempt{fixAttempts > 1 ? "s" : ""})
+            </div>
+          )}
+          {obj.execution && (
+            <ExecutionResultInline
+              execution={obj.execution as Record<string, unknown>}
+              stepIndex={stepIndex}
+              convId={convId}
+            />
+          )}
         </div>
       );
     }
@@ -387,58 +732,251 @@ function SingleResultView({ result }: { result: PlanStepResult }) {
     // Structured result with title/summary
     if (obj.title || obj.summary) {
       const rawSummary = obj.summary
-        ? (Array.isArray(obj.summary) ? (obj.summary as string[]).join('\n') : String(obj.summary))
-        : '';
-      const abbreviated = rawSummary.length > 250 ? rawSummary.slice(0, 250) + '...' : rawSummary;
+        ? Array.isArray(obj.summary)
+          ? (obj.summary as string[]).join("\n")
+          : String(obj.summary)
+        : "";
+      const abbreviated =
+        rawSummary.length > 250
+          ? extractSummaryHeaders(rawSummary)
+          : rawSummary;
 
-      const duration = obj.duration as string | undefined;
-      const tokens = obj.tokens as string | undefined;
-      const metaText = [duration, tokens ? `${tokens} tokens` : ''].filter(Boolean).join(' · ');
+      const duration =
+        typeof obj.duration === "number"
+          ? `${obj.duration.toFixed(1)}s`
+          : undefined;
+      const tokens =
+        typeof obj.tokens === "number" ? `${obj.tokens} tokens` : undefined;
+      const metaText = [duration, tokens].filter(Boolean).join(" · ");
 
       return (
         <div className="step-section-minimal">
-          {obj.title ? <span className="section-label-minimal">{String(obj.title)}</span> : null}
-          {abbreviated && <div className="step-brief-summary">{abbreviated}</div>}
-          {metaText && <div className="result-meta-minimal">{metaText}</div>}
+          {thinkBlock}
+          {obj.title && (
+            <span className="section-label-minimal">{String(obj.title)}</span>
+          )}
+          {abbreviated && (
+            <div className="step-brief-summary">
+              <MarkdownContent text={abbreviated} />
+            </div>
+          )}
+          {/* Mini charts */}
+          {obj.graph_type === "efficiency" && (
+            <MiniEfficiencyChart data={obj} />
+          )}
+          {obj.graph_type === "timeline" && <MiniTimelineChart data={obj} />}
+          <div className="result-meta-line">
+            <button
+              className="step-more-detail-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                appDispatch({
+                  type: "SET_ACTIVE_DETAIL_TAB",
+                  payload: "outputs",
+                });
+              }}
+            >
+              {t("label.more_detail") || "More detail"}
+            </button>
+            {metaText && (
+              <span className="result-meta-minimal">{metaText}</span>
+            )}
+          </div>
         </div>
       );
     }
 
     // Object with details array
     if (obj.details && Array.isArray(obj.details)) {
-      const first = String(obj.details[0] || '');
-      const more = obj.details.length > 1 ? ' ...' : '';
+      const first = String(obj.details[0] || "");
+      const more = obj.details.length > 1 ? " ..." : "";
       return (
         <div className="step-section-minimal">
-          <div className="step-brief-summary">{first}{more}</div>
+          {thinkBlock}
+          <div className="step-brief-summary">
+            {first}
+            {more}
+          </div>
         </div>
       );
+    }
+
+    // Unwrap nested result (e.g., {success, result: {actual data}})
+    if (obj.result && typeof obj.result === "object") {
+      return (
+        <SingleResultView
+          result={{ ...result, result: obj.result }}
+          stepIndex={stepIndex}
+          convId={convId}
+          appDispatch={appDispatch}
+        />
+      );
+    }
+
+    // stdout/stderr from code execution
+    if (obj.stdout && typeof obj.stdout === "string") {
+      const cleanStdout = (obj.stdout as string)
+        .replace(/<observation>([\s\S]*?)<\/observation>/gi, "$1")
+        .replace(/\[OBSERVATION\]([\s\S]*?)\[\/OBSERVATION\]/g, "$1")
+        .trim();
+      if (!cleanStdout) {
+        return thinkBlock ? (
+          <div className="step-section-minimal">{thinkBlock}</div>
+        ) : null;
+      }
+      const truncated =
+        cleanStdout.length > 300
+          ? cleanStdout.slice(0, 300) + "..."
+          : cleanStdout;
+      return (
+        <div className="step-section-minimal">
+          {thinkBlock}
+          <pre className="code-stdout">{truncated}</pre>
+        </div>
+      );
+    }
+
+    // If only think block
+    if (thinkBlock) {
+      return <div className="step-section-minimal">{thinkBlock}</div>;
     }
   }
 
   // Fallback: JSON (truncated)
   if (data == null) return null;
   const json = JSON.stringify(data, null, 2);
-  const truncated = json && json.length > 500 ? json.slice(0, 500) + '\n...' : json;
+  const truncated =
+    json && json.length > 500 ? json.slice(0, 500) + "\n..." : json;
   return <pre className="result-json">{truncated}</pre>;
 }
 
-// ─── Execution Result (code output) ───
+// ─── Think Block ───
 
-function ExecutionResultView({ execution }: { execution: Record<string, unknown> }) {
+function ThinkBlock({ content }: { content: string }) {
+  const [collapsed, setCollapsed] = useState(true);
+  return (
+    <div
+      className={`think-section-minimal${collapsed ? " collapsed" : ""}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        setCollapsed(!collapsed);
+      }}
+    >
+      <span className="think-toggle">Thinking {collapsed ? "▶" : "▼"}</span>
+      {!collapsed && (
+        <div className="think-content">
+          <MarkdownContent text={content} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Execution Result Inline ───
+
+function ExecutionResultInline({
+  execution,
+  stepIndex,
+  convId,
+}: {
+  execution: Record<string, unknown>;
+  stepIndex: number;
+  convId: string | null;
+}) {
+  const [figures, setFigures] = useState<string[]>([]);
   const stdout = execution.stdout as string | undefined;
-  const figures = execution.figures as string[] | undefined;
+  const execFigures = execution.figures as string[] | undefined;
+
+  useEffect(() => {
+    if (execFigures?.length) {
+      setFigures(execFigures);
+      return;
+    }
+    if (convId && stepIndex != null) {
+      listStepOutputs(convId, stepIndex)
+        .then((r) => setFigures(r.figures || []))
+        .catch(() => {});
+    }
+  }, [convId, stepIndex, execFigures]);
 
   return (
     <div className="step-exec-result">
       {stdout && stdout.trim() && (
-        <pre className="code-stdout">{stdout.length > 500 ? stdout.slice(0, 500) + '...' : stdout}</pre>
+        <pre className="code-stdout">
+          {stdout.length > 500 ? stdout.slice(0, 500) + "..." : stdout}
+        </pre>
       )}
-      {figures && figures.length > 0 && (
-        figures.map((f, i) => (
-          <img key={i} src={f} className="code-result-img" alt={`Figure ${i + 1}`} />
-        ))
-      )}
+      {figures.map((f, i) => (
+        <img
+          key={i}
+          src={convId ? getStepOutputUrl(convId, stepIndex, f) : f}
+          className="code-result-img"
+          alt={`Figure ${i + 1}`}
+          loading="lazy"
+        />
+      ))}
+    </div>
+  );
+}
+
+// ─── Summary Headers Extraction ───
+
+function extractSummaryHeaders(text: string): string {
+  const headers = text.match(
+    /(?:^|\n)(?:\d+\.\s+\*\*[^*]+\*\*|#{1,3}\s+[^\n]+)/g,
+  );
+  if (!headers || headers.length === 0)
+    return text.slice(0, 200) + (text.length > 200 ? "..." : "");
+  return headers
+    .map((h) => {
+      const idx = text.indexOf(h);
+      const after = text.slice(idx + h.length, idx + h.length + 100);
+      const sentence =
+        after.match(/^[^.!?\n]*[.!?]/)?.[0] || after.slice(0, 60);
+      return h.trim() + sentence.trim();
+    })
+    .join("\n")
+    .slice(0, 400);
+}
+
+// ─── Mini Charts ───
+
+function MiniEfficiencyChart({ data }: { data: Record<string, unknown> }) {
+  const avg = data.avg_efficiency as number | undefined;
+  if (avg == null) return null;
+  const bars = Array.from({ length: 6 }, (_, i) =>
+    Math.max(10, Math.min(100, avg + (Math.random() - 0.5) * 30)),
+  );
+  return (
+    <div className="mini-chart">
+      {bars.map((h, i) => (
+        <div key={i} className="mini-bar" style={{ height: `${h}%` }} />
+      ))}
+    </div>
+  );
+}
+
+function MiniTimelineChart({ data }: { data: Record<string, unknown> }) {
+  const weeks = data.weeks as Array<Record<string, unknown>> | undefined;
+  if (!weeks?.length) return null;
+  const colors = [
+    "#4CAF50",
+    "#2196F3",
+    "#FF9800",
+    "#9C27B0",
+    "#F44336",
+    "#00BCD4",
+  ];
+  return (
+    <div className="mini-timeline">
+      {weeks.slice(0, 8).map((w, i) => (
+        <div
+          key={i}
+          className="mini-timeline-block"
+          style={{ backgroundColor: colors[i % colors.length], opacity: 0.7 }}
+          title={String(w.label || `Week ${i + 1}`)}
+        />
+      ))}
     </div>
   );
 }

@@ -23,7 +23,7 @@ function StepNodeComponent({ node, onTitleChange }: NodeComponentProps) {
         nodeId={node.id}
         onTitleChange={onTitleChange}
       />
-      <div className="ng-node-body">{node.tool || node.description || '\u00A0'}</div>
+      <div className="ng-node-body">{node.description || '\u00A0'}</div>
       <ProgressBar />
       <PortRow nodeId={node.id} ports={PORTS} dir="out" />
     </>

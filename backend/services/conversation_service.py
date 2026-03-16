@@ -196,7 +196,27 @@ class ConversationService:
         return msg
 
     async def replace_last_plan_message(self, conv_id: UUID, new_content: str) -> bool:
-        """Replace the last assistant message containing [TOOL_CALLS]...create_plan."""
+        """Replace the last assistant message containing [PLAN_CREATE] (or legacy [TOOL_CALLS]...create_plan)."""
+        # Try new marker first, then legacy
+        for marker in ("[PLAN_CREATE]", "[PLAN_COMPLETE]"):
+            stmt = (
+                select(Message)
+                .where(
+                    Message.conversation_id == conv_id,
+                    Message.role == "assistant",
+                    Message.content.contains(marker),
+                )
+                .order_by(Message.id.desc())
+                .limit(1)
+            )
+            result = await self._db.execute(stmt)
+            msg = result.scalar_one_or_none()
+            if msg is not None:
+                msg.content = new_content
+                await self._touch_updated_at(conv_id)
+                await self._db.commit()
+                return True
+        # Legacy fallback
         stmt = (
             select(Message)
             .where(

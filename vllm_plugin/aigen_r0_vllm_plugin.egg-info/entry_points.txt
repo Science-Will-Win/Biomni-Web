@@ -1,0 +1,2 @@
+[vllm.general_plugins]
+aigen_r0 = aigen_r0_plugin:register

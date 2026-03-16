@@ -95,12 +95,13 @@ class ModelInfo(BaseModel):
     name: str
     display_name: str = ""  # Folder name for local models, same as name for API
     type: str  # "local" or "api"
-    provider: str  # "sglang", "openai", "anthropic", "gemini"
+    provider: str  # "vllm", "openai", "anthropic", "gemini"
     status: str = "available"
 
 
 class ModelSwitchRequest(BaseModel):
     model_name: str
+    force: bool = False
 
 
 class ApiKeyRequest(BaseModel):
@@ -128,6 +129,8 @@ class SettingsResponse(BaseModel):
     refusal_temp_decay: float = 0.7
     refusal_min_temp: float = 0.3
     refusal_recovery_tokens: int = 50
+    # Prompt options
+    use_compact_prompt: bool = False
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -143,6 +146,8 @@ class SettingsUpdateRequest(BaseModel):
     refusal_temp_decay: Optional[float] = None
     refusal_min_temp: Optional[float] = None
     refusal_recovery_tokens: Optional[int] = None
+    # Prompt options
+    use_compact_prompt: Optional[bool] = None
 
 
 class SystemPromptResponse(BaseModel):
@@ -159,6 +164,8 @@ class ToolCallRequest(BaseModel):
 class ExecuteCodeRequest(BaseModel):
     code: str
     language: str = "python"
+    conv_id: Optional[str] = None
+    step_index: Optional[int] = None
 
 
 class NodeManifest(BaseModel):

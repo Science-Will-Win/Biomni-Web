@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { Send, Square, Paperclip } from 'lucide-react';
+import { Send, Paperclip } from 'lucide-react';
 import { useChatContext } from '@/context/ChatContext';
 import { useWebSocket } from '@/context/WebSocketContext';
 import { useConversations } from '@/hooks/useConversations';
@@ -22,7 +22,8 @@ export function ChatInput() {
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (!text || isStreaming) return;
+    if (isStreaming) return;
+    if (!text && pendingFiles.length === 0) return;
 
     setInput('');
     if (textareaRef.current) {
@@ -37,6 +38,8 @@ export function ChatInput() {
         conv_id: state.conversationId,
         question: text,
         steps: state.stepQuestions,
+        plan_goal: state.stepQuestions[0]?.planGoal || '',
+        plan_steps: state.stepQuestions[0]?.planSteps || [],
       });
       dispatch({ type: 'CLEAR_STEP_QUESTIONS' });
       return;
@@ -54,6 +57,11 @@ export function ChatInput() {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    }
+    // Backspace on empty input → clear all step tags (original app.js:249-251)
+    if (e.key === 'Backspace' && input === '' && state.stepQuestions.length > 0) {
+      e.preventDefault();
+      dispatch({ type: 'CLEAR_STEP_QUESTIONS' });
     }
   };
 
@@ -100,23 +108,6 @@ export function ChatInput() {
       {/* File previews */}
       <FilePreviewList files={pendingFiles} onRemove={removeFile} />
 
-      {/* Step question context tags */}
-      {state.stepQuestions.length > 0 && (
-        <div className="input-tags">
-          {state.stepQuestions.map((q) => (
-            <span key={q.stepNum} className="input-tag" data-step={q.stepNum}>
-              {q.stepNum === 0 ? (t('label.entire_plan') || 'Entire Plan') : `Step ${q.stepNum}`}
-              <span
-                className="input-tag-remove"
-                onClick={() => dispatch({ type: 'REMOVE_STEP_QUESTION', payload: q.stepNum })}
-              >
-                &times;
-              </span>
-            </span>
-          ))}
-        </div>
-      )}
-
       {/* Input wrapper — flex row: mode-toggle | textarea | attach | send */}
       <div className="input-wrapper">
         {/* Mode toggle */}
@@ -135,15 +126,32 @@ export function ChatInput() {
           </button>
         </div>
 
-        {/* Input container */}
+        {/* Input container — tags inline with textarea */}
         <div className="input-container">
+          {state.stepQuestions.length > 0 && (
+            <div className="input-tags">
+              {state.stepQuestions.map((q) => (
+                <span key={q.stepNum} className="input-tag" data-step={q.stepNum}>
+                  {q.stepNum === 0 ? (t('label.entire_plan') || 'Entire Plan') : `Step ${q.stepNum}`}
+                  <span
+                    className="input-tag-remove"
+                    onClick={() => dispatch({ type: 'REMOVE_STEP_QUESTION', payload: q.stepNum })}
+                  >
+                    &times;
+                  </span>
+                </span>
+              ))}
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             className="message-input"
             value={input}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
-            placeholder={t('placeholder.message')}
+            placeholder={state.stepQuestions.length > 0
+              ? `Ask a question about Step Plan...`
+              : t('placeholder.message')}
             rows={1}
             disabled={isStreaming}
           />
@@ -172,7 +180,9 @@ export function ChatInput() {
         {/* Send / Stop button */}
         {isStreaming ? (
           <button className="btn-send streaming" onClick={stopGeneration} title={t('tooltip.stop')}>
-            <Square size={20} />
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
+            </svg>
           </button>
         ) : (
           <button

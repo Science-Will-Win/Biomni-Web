@@ -32,6 +32,7 @@ opentelemetry-instrumentation-fastapi
 # ─── Utilities ───
 pyyaml
 requests
+docker
 tqdm
 mcp
 nest-asyncio

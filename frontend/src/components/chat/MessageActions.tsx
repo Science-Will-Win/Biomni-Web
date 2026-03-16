@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Copy, Check, Pencil, Trash2, RefreshCw } from 'lucide-react';
 import { useChatContext } from '@/context/ChatContext';
+import { useAppContext } from '@/context/AppContext';
 import { useWebSocket } from '@/context/WebSocketContext';
 import { truncateConversation } from '@/api/conversations';
 
@@ -17,7 +18,8 @@ interface Props {
  */
 export function MessageActions({ messageIndex, role, content, onEdit }: Props) {
   const { state, dispatch } = useChatContext();
-  const { sendMessage } = useWebSocket();
+  const { dispatch: appDispatch } = useAppContext();
+  const { sendMessage, stopGeneration } = useWebSocket();
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
@@ -28,10 +30,14 @@ export function MessageActions({ messageIndex, role, content, onEdit }: Props) {
   };
 
   const handleDelete = async () => {
+    if (state.isStreaming) {
+      stopGeneration();
+    }
     const convId = state.conversationId;
     if (convId) {
       await truncateConversation(convId, messageIndex).catch(() => {});
     }
+    appDispatch({ type: 'CLEAR_DETAIL_PANEL' });
     dispatch({ type: 'TRUNCATE_FROM', payload: messageIndex });
   };
 
@@ -43,6 +49,7 @@ export function MessageActions({ messageIndex, role, content, onEdit }: Props) {
       if (convId) {
         await truncateConversation(convId, messageIndex - 1).catch(() => {});
       }
+      appDispatch({ type: 'CLEAR_DETAIL_PANEL' });
       dispatch({ type: 'TRUNCATE_FROM', payload: messageIndex - 1 });
       // Reconstruct PendingFile-like objects from stored file data to preserve attachments
       const files = userMsg.files?.map((f) => ({
@@ -65,11 +72,9 @@ export function MessageActions({ messageIndex, role, content, onEdit }: Props) {
       <button className="message-action-btn" onClick={handleCopy} title={copied ? 'Copied' : 'Copy'}>
         {copied ? <Check size={14} /> : <Copy size={14} />}
       </button>
-      {role === 'user' && (
-        <button className="message-action-btn delete-btn" onClick={handleDelete} title="Delete">
-          <Trash2 size={14} />
-        </button>
-      )}
+      <button className="message-action-btn delete-btn" onClick={handleDelete} title="Delete">
+        <Trash2 size={14} />
+      </button>
       {role === 'assistant' && (
         <button className="message-action-btn" onClick={handleRegenerate} title="Regenerate">
           <RefreshCw size={14} />

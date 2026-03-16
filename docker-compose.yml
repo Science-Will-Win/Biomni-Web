@@ -23,6 +23,13 @@ services:
       - ./reasoning_logs:/app/reasoning_logs
       # Models directory (for local model folder detection)
       - ../models:/app/models
+      # Docker socket (for dynamic vLLM container management)
+      - /var/run/docker.sock:/var/run/docker.sock
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        pip install asyncpg docker -q 2>/dev/null || true
+        ./entrypoint.sh
     ports:
       - "8003:8000"
     depends_on:
@@ -40,6 +47,24 @@ services:
       - POSTGRES_DB=aigen
     volumes:
       - aigen-pgdata:/var/lib/postgresql/data
+
+  vllm-server:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-server
+    runtime: nvidia
+    ports:
+      - "30000:8000"
+    volumes:
+      - ../models:/app/models
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    command: >
+      --model /app/models/Ministral-3-3B-Reasoning-2512
+      --served-model-name ministral-reasoning
+      --port 8000
+      --host 0.0.0.0
+      --max-model-len 65536
+    restart: unless-stopped
 
 volumes:
   aigen-pgdata:

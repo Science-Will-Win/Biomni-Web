@@ -13,7 +13,7 @@ export class ApiError extends Error {
 
 export interface HealthStatus {
   status: string;
-  sglang: boolean;
+  vllm: boolean;
   db: boolean;
 }
 

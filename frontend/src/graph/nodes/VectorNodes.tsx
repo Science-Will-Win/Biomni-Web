@@ -2,11 +2,20 @@
 import { registerNode } from '../node-registry';
 import type { NodeComponentProps } from '../node-registry';
 import { PortRow } from '../components/PortRow';
+import { useState } from 'react';
 
 const LABELS = ['X', 'Y', 'Z', 'W'];
 
+function formatFloat(n: number): string {
+  const s = String(n);
+  return s.includes('.') ? s : s + '.0';
+}
+
 function VectorInput({ node, size, onPortValueChange }: NodeComponentProps & { size: number }) {
   const val = (node.portValues?.out as number[]) ?? new Array(size).fill(0);
+  const [editIdx, setEditIdx] = useState<number | null>(null);
+  const [draft, setDraft] = useState('');
+
   return (
     <>
       <div className="ng-node-header"><span className="ng-node-title">{node.title}</span></div>
@@ -14,14 +23,20 @@ function VectorInput({ node, size, onPortValueChange }: NodeComponentProps & { s
         {Array.from({ length: size }, (_, i) => (
           <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <span style={{ fontSize: 9, color: 'var(--text-muted)', textAlign: 'center' }}>{LABELS[i]}</span>
-            <input type="number" step="any" className="ng-input-node-field ng-interactive"
+            <input type="text" inputMode="decimal" className="ng-input-node-field ng-interactive"
               style={{ textAlign: 'center', padding: '3px 2px' }}
-              value={val[i] ?? 0}
+              value={editIdx === i ? draft : formatFloat(val[i] ?? 0)}
+              onFocus={e => { setEditIdx(i); setDraft(e.target.value); }}
               onChange={e => {
+                const raw = e.target.value;
+                if (raw !== '' && !/^-?\d*\.?\d*$/.test(raw)) return;
+                setDraft(raw);
                 const next = [...val];
-                next[i] = parseFloat(e.target.value) || 0;
+                next[i] = raw === '' ? 0 : (parseFloat(raw) || 0);
                 onPortValueChange?.(node.id, 'out', next);
               }}
+              onBlur={() => setEditIdx(null)}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
               onMouseDown={e => e.stopPropagation()} />
           </div>
         ))}

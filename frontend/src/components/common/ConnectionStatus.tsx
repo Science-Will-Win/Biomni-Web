@@ -1,47 +1,46 @@
 // ============================================
 // Connection Status Indicator
-// Shows SGLang/DB connection health in bottom-right
+// Shows vLLM/DB connection health in bottom-right
 // ============================================
 
 import { useState, useEffect, useRef } from 'react';
 import { fetchHealth } from '@/api/client';
 import type { HealthStatus } from '@/api/client';
-import { useAppContext } from '@/context/AppContext';
 
 const POLL_INTERVAL = 30_000; // 30 seconds
 
 export function ConnectionStatus() {
-  const { state } = useAppContext();
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [showTooltip, setShowTooltip] = useState(false);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
-  useEffect(() => {
-    const check = async () => {
-      try {
-        const h = await fetchHealth();
-        setHealth(h);
-      } catch {
-        setHealth({ status: 'error', sglang: false, db: false });
-      }
-    };
+  const intervalRef = useRef<ReturnType<typeof setInterval>>();
 
+  const check = async () => {
+    try {
+      const h = await fetchHealth();
+      setHealth(h);
+    } catch {
+      setHealth({ status: 'error', vllm: false, db: false });
+    }
+  };
+
+  useEffect(() => {
     check();
     intervalRef.current = setInterval(check, POLL_INTERVAL);
     return () => clearInterval(intervalRef.current);
   }, []);
 
+  // Sync with model switching — immediate health check on switch start/end
+  useEffect(() => {
+    const onSwitch = () => check();
+    window.addEventListener('model-switching', onSwitch);
+    return () => window.removeEventListener('model-switching', onSwitch);
+  }, []);
+
   if (!health) return null;
 
-  // 현재 선택된 모델이 커스텀(로컬) 모델인지 확인합니다.
-  const isLocalModel = state.currentModel?.type === 'local';
-
-  // DB는 항상 정상이어야 하고, SGLang은 로컬 모델을 사용할 때만 정상이면 됩니다.
-  const allOk = health.db && (!isLocalModel || health.sglang);
-  
+  const allOk = health.vllm && health.db;
   const issues: string[] = [];
-  // 로컬 모델인데 SGLang이 죽어있을 때만 이슈 목록에 추가
-  if (isLocalModel && !health.sglang) issues.push('SGLang');
-  // DB 이슈는 항상 체크
+  if (!health.vllm) issues.push('vLLM');
   if (!health.db) issues.push('Database');
 
   return (
@@ -53,18 +52,15 @@ export function ConnectionStatus() {
       <span className={`connection-dot ${allOk ? 'ok' : 'error'}`} />
       {!allOk && (
         <span className="connection-label">
-          {issues.join(', ')} disconnected
+          {issues.join(', ')}
         </span>
       )}
       {showTooltip && (
         <div className="connection-tooltip">
-          {/* 로컬 모델일 때만 SGLang 상태 행을 툴팁에 렌더링합니다. */}
-          {isLocalModel && (
-            <div className={`connection-tooltip-row ${health.sglang ? 'ok' : 'error'}`}>
-              <span className={`connection-dot-sm ${health.sglang ? 'ok' : 'error'}`} />
-              SGLang: {health.sglang ? 'Connected' : 'Disconnected'}
-            </div>
-          )}
+          <div className={`connection-tooltip-row ${health.vllm ? 'ok' : 'error'}`}>
+            <span className={`connection-dot-sm ${health.vllm ? 'ok' : 'error'}`} />
+            vLLM: {health.vllm ? 'Connected' : 'Disconnected'}
+          </div>
           <div className={`connection-tooltip-row ${health.db ? 'ok' : 'error'}`}>
             <span className={`connection-dot-sm ${health.db ? 'ok' : 'error'}`} />
             Database: {health.db ? 'Connected' : 'Disconnected'}
