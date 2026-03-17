@@ -2,7 +2,10 @@ version: "3.8"
 
 services:
   aigen-backend:
-    build: ./backend
+    build:
+      context: ./backend
+      additional_contexts:
+        - biomni_repo=../Biomni
     image: jiyeonl/biomni-web_backend
     container_name: aigen-backend
     env_file:
