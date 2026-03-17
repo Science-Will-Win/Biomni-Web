@@ -14,6 +14,7 @@ __pycache__/
 frontend/node_modules/
 frontend/dist/
 frontend/.claude/
+.claude/
 
 # Backend generated files (analysis outputs, plots, temp data)
 backend/*.csv
