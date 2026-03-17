@@ -230,6 +230,7 @@ CRITICAL VERIFICATION:
 - If a previous step concluded with an answer, critically evaluate whether that conclusion is well-supported by the evidence.
 - When new evidence contradicts earlier findings, update your conclusions accordingly rather than forcing consistency with prior results.
 - Question assumptions: just because a previous step marked something as complete does not mean the result is correct or optimal.
+- Do NOT assume or guess conclusions. You MUST use tools to obtain actual data, then verify and base your answers strictly on tool outputs and execution results, not on preconceived expectations.
 
 You may or may not receive feedbacks from human. If so, address the feedbacks by following the same procedure of multiple rounds of thinking, execution, and then coming up with a new solution."""
 
@@ -249,39 +250,34 @@ To achieve this, you will be using an interactive coding environment equipped wi
 
 You MUST use {think_fmt}...{think_close} to reason step by step before creating your plan. Think carefully about the task, then provide your plan.
 
-# RULES
-
-- Start with a Goal line, then list numbered steps with empty checkboxes
-- Goal: A concise noun phrase describing the overall objective
-- Each step MUST have a SHORT NAME (3-5 words) followed by a COLON, then a detailed description
-- The colon (:) separator between name and description is MANDATORY
-- Step names MUST be short noun phrases (3-5 words ONLY), NOT full sentences
-- NEVER write the entire description as the step name
-- Your plan MUST include at least 4 steps
-- Each step MUST perform a DISTINCT task — do NOT create steps that overlap or repeat similar work
-- Before finalizing, check that no two steps cover the same activity (e.g., do not have both "literature review" and "gene function research" as separate steps if they do the same thing)
-- Write the goal and step names/descriptions in the user's language
+Given a task, make a plan first. The plan should be a numbered list of steps that you will take to solve the task. Be specific and detailed.
+Write the goal and step names/descriptions in the user's language.
 
 # FORMAT
 
 Goal: [concise noun phrase describing the overall objective]
+1. [ ] First step : first step description
+2. [ ] Second step : second step description
+3. [ ] Third step : third step description
+4. [ ] Forth step : forth step description
 
+Your response MUST contain ONLY two parts:
+1. {think_fmt}...{think_close} tags with your reasoning
+2. The plan in the exact FORMAT above (Goal + numbered checklist)
+Do NOT output any other text, explanation, or markdown code blocks outside these two parts.
+Your task is ONLY to create a plan. Do NOT execute the plan or write any code.
+Create an efficient plan with at least 4 and at most 8 steps.
+Each step MUST use the format "Short name: detailed description" with a colon separator.
+
+# EXAMPLE (for reference only, do not copy)
+
+Goal: Analyze gene expression patterns in red blood cell development
 1. [ ] Data collection: Gather relevant datasets from public databases and repositories for analysis
 2. [ ] Gene function analysis: Research the biological functions of each gene in relation to the target pathway
 3. [ ] Statistical modeling: Apply statistical methods to identify significant patterns in the data
 4. [ ] Results visualization: Create figures and plots to present the findings clearly
 
-WRONG (DO NOT do this - missing colon separator, name too long):
-1. [ ] Research the biological functions of each gene in relation to red blood cell development
-
-CORRECT (short name + colon + description):
-1. [ ] Gene function research: Research the biological functions of each gene in relation to red blood cell development
-
-# IMPORTANT
-
-After your {think_fmt} block, output ONLY the plan in the exact format above.
-Each step MUST be: "number. [ ] Short Name: Detailed description"
-Do not include any additional explanation, rationale, or commentary outside the plan."""
+"""
 
 
 # Legacy constant (regenerated with default think tags)

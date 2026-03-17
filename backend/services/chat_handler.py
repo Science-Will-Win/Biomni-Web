@@ -164,6 +164,16 @@ def _parse_segments(full_response: str, behavior: Dict[str, Any]) -> List[Dict[s
                 if not overlaps:
                     all_blocks.append((m.start(), m.end(), seg_type, m.group(1).strip()))
 
+    # Phase 1b: Detect markdown fenced code blocks (```lang\n...\n```)
+    md_code_pat = re.compile(r'```(\w*)\n([\s\S]*?)```')
+    for m in md_code_pat.finditer(full_response):
+        overlaps = any(
+            b[0] <= m.start() < b[1] or b[0] < m.end() <= b[1]
+            for b in all_blocks
+        )
+        if not overlaps and m.group(2).strip():
+            all_blocks.append((m.start(), m.end(), "code", m.group(2).strip()))
+
     # Phase 2: Remove child blocks that are fully contained within thinking blocks.
     # This keeps <execute>/<observation> inside [THINK] as part of think content,
     # so SpecialTokenBlock.processThinkContent() can render them as code/blockquote.
@@ -372,6 +382,8 @@ def _extract_plan_from_text(text: str, user_message: str) -> Optional[Dict[str, 
     # Strip think blocks (closed pairs only — safe; includes </thought> variant)
     cleaned = re.sub(r'<think>[\s\S]*?</(?:think|thought)>', '', text, flags=re.IGNORECASE)
     cleaned = re.sub(r'\[THINK\][\s\S]*?\[/THINK\]', '', cleaned, flags=re.IGNORECASE)
+    # Strip markdown code block fences (LLM sometimes wraps plan in ```)
+    cleaned = re.sub(r'```[a-zA-Z]*\n?', '', cleaned)
 
     lines = cleaned.strip().split("\n")
     steps: list = []
@@ -475,8 +487,8 @@ def _extract_plan_from_text(text: str, user_message: str) -> Optional[Dict[str, 
                     desc = _capture_next_desc(lines, idx, numbered_pat)
                 steps.append({"name": name, "description": desc})
 
-    if len(steps) >= 4 and _has_goal_line(lines, first_step_idx or 0):
-        goal = _find_goal(lines, first_step_idx or 0)
+    if len(steps) >= 4 and _has_goal_line(lines, len(lines)):
+        goal = _find_goal(lines, len(lines))
         logger.info(f"Plan extracted from numbered list: {len(steps)} steps")
         return {"goal": goal, "steps": steps[:10]}
 
@@ -499,8 +511,8 @@ def _extract_plan_from_text(text: str, user_message: str) -> Optional[Dict[str, 
                     desc = _capture_next_desc(lines, idx, checkbox_pat)
                 steps.append({"name": name, "description": desc})
 
-    if len(steps) >= 4 and _has_goal_line(lines, first_step_idx or 0):
-        goal = _find_goal(lines, first_step_idx or 0)
+    if len(steps) >= 4 and _has_goal_line(lines, len(lines)):
+        goal = _find_goal(lines, len(lines))
         logger.info(f"Plan extracted from checkbox items: {len(steps)} steps")
         return {"goal": goal, "steps": steps[:10]}
 
@@ -690,7 +702,7 @@ class ChatHandler:
         """Phase A: 별도 LLM 호출로 plan 생성 (checklist 형식).
 
         Local 방식 복원: per-attempt ChatOpenAI with repetition_penalty + temperature decay.
-        Local 모델: repetition_penalty 1.15→1.25→1.35, temperature decay 0.7^attempt
+        Local 모델: repetition_penalty 1.1→1.3→1.5, temperature decay 0.7^attempt
         API 모델: temperature decay만 적용 (repetition_penalty 불필요)
         """
         from langchain_openai import ChatOpenAI
@@ -719,7 +731,7 @@ class ChatHandler:
             if self._stop_flags.get(conv_id):
                 return
 
-            rep_penalty = 1.15 + 0.1 * attempt
+            rep_penalty = 1.1 + 0.2 * attempt
             base_temp = getattr(base_llm, 'temperature', 0.7) or 0.7
             temperature = max(0.1, base_temp * (0.7 ** attempt))
 
@@ -873,7 +885,7 @@ class ChatHandler:
             retrieval_query = plan_state["goal"] + "\n" + "\n".join(
                 s.get("description", s.get("name", "")) for s in steps
             )
-            use_llm_ret = behavior.get("use_llm_retrieval", False)
+            use_llm_ret = behavior.get("use_llm_retrieval", True)
             if use_llm_ret:
                 llm = await llm_service.get_llm_instance(db=db)
                 retrieval_result = await biomni_loader.retrieval_with_llm(
