@@ -619,17 +619,17 @@ class ChatHandler:
                 @observe(as_type="span", name="run_sandbox_code")
                 def _patched_traced_run(code: str, timeout: int):
                     # Langfuse에 입력 코드 기록
-                    langfuse_context.update_current_span(input={"code": code, "timeout": timeout})
-                    
+                    langfuse_context.update_current_observation(input={"code": code, "timeout": timeout})
+
                     fixed, corrections = _fix_biomni_imports(code, mapping)
                     if corrections:
                         logger.info(f"Import auto-fix: {corrections}")
-                    
+                
                     # 실제 코드 실행
                     result = original_run(fixed, timeout)
-                    
+                
                     # Langfuse에 실행 결과 기록
-                    langfuse_context.update_current_span(output={"result": result})
+                    langfuse_context.update_current_observation(output={"result": result})
                     return result
                 agent._traced_run_code = _patched_traced_run
                 agent._import_patched = True

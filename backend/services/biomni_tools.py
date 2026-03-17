@@ -12,6 +12,7 @@ import logging
 import os
 import re
 from typing import Any, Dict, List, Optional, TypedDict
+from langfuse.decorators import observe
 
 logger = logging.getLogger("aigen.biomni_tools")
 
