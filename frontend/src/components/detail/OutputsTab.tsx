@@ -6,11 +6,12 @@ import { useTranslation } from '@/i18n';
 import { MarkdownContent } from '@/utils/MarkdownContent';
 import { highlightCodeSyntax } from '@/utils/codeHighlight';
 import { SpecialTokenBlock } from '@/components/chat/SpecialTokenBlock';
+import { recoverBrokenChars } from '@/utils/textClean';
 import type { PlanStepResult } from '@/types';
 
 /** Strip special tokens from result text fields. */
 function stripSpecialTokens(s: string): string {
-  return s
+  return recoverBrokenChars(s
     // Strip execute blocks: closed, or unclosed (up to next observation/execute/end)
     .replace(/<execute>[\s\S]*?<\/execute>/gi, '')
     .replace(/<execute>[\s\S]*?(?=<observation>|<execute>|$)/gi, '')
@@ -30,7 +31,7 @@ function stripSpecialTokens(s: string): string {
     .replace(/\[THINK\][\s\S]*?\[\/THINK\]/g, '')
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
     .replace(/<think>[\s\S]*$/gi, '')
-    .replace(/<\/think>/gi, '');
+    .replace(/<\/think>/gi, ''));
 }
 
 /**
@@ -181,7 +182,7 @@ function GroupedStepOutputSection({ index, stepName, toolName, results, convId }
   const hasError = results.some((r) => !r.success);
 
   return (
-    <div className="output-step-section">
+    <div className="output-step-section" data-step={index}>
       <div className="output-step-header">
         <span className="output-step-number">{index}</span>
         <span className="output-step-title">{stepName}</span>
@@ -299,7 +300,7 @@ function ToolResultDetail({ result }: { result: unknown }) {
           break;
         case 'output':
           parts.push(
-            <pre key={`seg-${i}`} className="result-stdout">{seg.content}</pre>,
+            <pre key={`seg-${i}`} className="result-stdout">{recoverBrokenChars(seg.content)}</pre>,
           );
           break;
         case 'solution':
@@ -347,7 +348,7 @@ function ToolResultDetail({ result }: { result: unknown }) {
     }
   }
 
-  // Solution (fallback — when segments path doesn't cover it)
+  // Solution
   if (r.solution && typeof r.solution === 'string') {
     const cleanSolution = stripSpecialTokens(r.solution as string).trim();
     if (cleanSolution) {
@@ -399,10 +400,11 @@ function ToolResultDetail({ result }: { result: unknown }) {
 /** Code block with syntax highlighting (same style as CodeTab). */
 function OutputCodeBlock({ code, language }: { code: string; language: string }) {
   const [copied, setCopied] = useState(false);
-  const highlightedHtml = useMemo(() => highlightCodeSyntax(code, language), [code, language]);
+  const cleanCode = useMemo(() => recoverBrokenChars(code), [code]);
+  const highlightedHtml = useMemo(() => highlightCodeSyntax(cleanCode, language), [cleanCode, language]);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(code);
+    await navigator.clipboard.writeText(cleanCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

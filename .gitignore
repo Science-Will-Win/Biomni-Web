@@ -1,7 +1,45 @@
+# Environment
 .env
-biomni_data
-backend/__pycache__
-backend/*/__pycache__
-reasoning_logs
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pdb
 .pybiomart.sqlite
-frontend/.claude
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.claude/
+
+# Backend generated files (analysis outputs, plots, temp data)
+backend/*.csv
+backend/*.png
+backend/*.txt
+!backend/requirements.txt
+backend/output/
+backend/results/
+backend/checkpoints/
+backend/default_data_dir/
+backend/models/
+
+# Data
+biomni_data/
+reasoning_logs/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/plans/

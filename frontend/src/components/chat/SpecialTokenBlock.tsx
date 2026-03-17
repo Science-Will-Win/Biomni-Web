@@ -43,7 +43,8 @@ export function SpecialTokenBlock({ label, content, variant = 'think', isStreami
 
   // Think variant: minimal gray design
   if (variant === 'think') {
-    const preview = content.replace(/\n/g, ' ').slice(0, 80);
+    const rawPreview = content.replace(/\n/g, ' ');
+    const preview = rawPreview.length > 80 ? rawPreview.slice(0, 80) + '...' : rawPreview;
     const lastLine = content.split('\n').filter(l => l.trim()).pop() || '';
 
     return (

@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { highlightCodeSyntax } from './codeHighlight';
+import { recoverBrokenChars } from './textClean';
 
 function MdCodeBlock({ code, language }: { code: string; language: string }) {
   const [copied, setCopied] = useState(false);
@@ -40,7 +41,7 @@ export function MarkdownContent({ text }: { text: string }) {
         },
       }}
     >
-      {text || ''}
+      {recoverBrokenChars(text || '')}
     </ReactMarkdown>
   );
 }
