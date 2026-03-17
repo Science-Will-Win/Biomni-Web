@@ -270,6 +270,7 @@ class BiomniToolLoader:
                     indices.append(idx)
         return [items[i] for i in indices[:max_count]]
 
+    @observe(as_type="span", name="tool_retrieval_with_llm")
     async def retrieval_with_llm(
         self, query: str, llm: Any, max_tools: int = 15,
         plan_context: str = "",
@@ -280,6 +281,8 @@ class BiomniToolLoader:
         Parses TOOLS, DATA_LAKE, and LIBRARIES indices from LLM response.
         Falls back to keyword_search on failure.
         """
+        langfuse_context.update_current_span(input={"query": query, "plan_context": plan_context})
+
         from langchain_core.messages import HumanMessage
 
         data_lake_items = data_lake_items or []
@@ -326,11 +329,18 @@ class BiomniToolLoader:
                     f"{len(selected_data_lake)} data_lake, "
                     f"{len(selected_libraries)} libraries"
                 )
-                return RetrievalResult(
+                
+                result = RetrievalResult(
                     tools=selected_tools,
                     data_lake=selected_data_lake,
                     libraries=selected_libraries,
                 )
+                # Langfuse에 반환된 도구 개수 등 메타데이터 기록
+                langfuse_context.update_current_span(output={
+                    "tools_count": len(selected_tools),
+                    "data_lake_count": len(selected_data_lake)
+                })
+                return result
 
             # Try parsing as JSON fallback
             try:
