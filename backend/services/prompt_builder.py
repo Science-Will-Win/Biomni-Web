@@ -227,6 +227,12 @@ If the user requests an experimental protocol, use search_protocols(), advanced_
 # ─── Section [E]: Self-critic ───
 
 SECTION_SELF_CRITIC = """
+CRITICAL VERIFICATION:
+- Do NOT blindly trust results from previous steps. Always verify and cross-check findings before building upon them.
+- If a previous step concluded with an answer, critically evaluate whether that conclusion is well-supported by the evidence.
+- When new evidence contradicts earlier findings, update your conclusions accordingly rather than forcing consistency with prior results.
+- Question assumptions: just because a previous step marked something as complete does not mean the result is correct or optimal.
+
 You may or may not receive feedbacks from human. If so, address the feedbacks by following the same procedure of multiple rounds of thinking, execution, and then coming up with a new solution."""
 
 

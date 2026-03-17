@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { useAppContext } from "@/context/AppContext";
 import { analyzePlan } from "@/api/plan";
 import { useTranslation } from "@/i18n";
+import { recoverBrokenChars } from "@/utils/textClean";
 import { RefreshCw, Loader, AlertCircle } from "lucide-react";
 
 export function PlanTab() {
@@ -125,7 +126,7 @@ export function PlanTab() {
       {/* Analysis markdown — rendered directly in detail-plan-content (matches original) */}
       {data.analysis && (
         <ReactMarkdown remarkPlugins={[remarkGfm]}>
-          {data.analysis}
+          {recoverBrokenChars(data.analysis)}
         </ReactMarkdown>
       )}
 

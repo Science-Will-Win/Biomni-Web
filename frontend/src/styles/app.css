@@ -1819,7 +1819,7 @@ html, body {
    ============================================ */
 .sidebar-footer {
     padding: 12px;
-    border-top: 1px solid var(--border-color);
+    border-top: none;
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -3014,9 +3014,7 @@ body,
     border-radius: var(--radius-lg);
     margin: 12px 0;
     overflow: hidden;
-    width: 100%;
-    max-width: 600px;
-    min-width: 400px;
+    min-width: 0;
 }
 
 .plan-steps-box .plan-steps {
@@ -4086,19 +4084,17 @@ body,
 
 .step-more-detail-btn {
     display: inline-block;
-    padding: 3px 12px;
+    padding: 3px 8px;
     font-size: 11px;
-    font-weight: 500;
+    font-weight: 400;
     color: var(--text-tertiary);
-    background: var(--bg-tertiary);
+    background: transparent;
     border: none;
-    border-radius: 999px;
     cursor: pointer;
-    transition: background 0.15s, color 0.15s;
+    transition: color 0.15s;
 }
 .step-more-detail-btn:hover {
-    color: var(--text-color);
-    background: var(--hover-bg, var(--bg-secondary));
+    color: var(--text-secondary);
 }
 
 /* Dark mode adjustments */
@@ -4667,9 +4663,6 @@ body,
     border-bottom: none;
     margin-bottom: 0;
     padding-bottom: 0;
-}
-.code-group.error {
-    border-left: 3px solid var(--error);
 }
 
 .code-block-header {
