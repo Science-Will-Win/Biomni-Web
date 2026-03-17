@@ -20,6 +20,7 @@ class RetrievalResult(TypedDict):
     tools: List[Dict[str, Any]]
     data_lake: List[Dict[str, str]]
     libraries: List[Dict[str, str]]
+    know_how: List[Dict[str, str]]
 
 
 def scan_data_lake(data_lake_path: str) -> List[Dict[str, str]]:
@@ -74,6 +75,9 @@ class BiomniToolLoader:
     def __init__(self) -> None:
         self._module2api: Dict[str, List[Dict[str, Any]]] = {}
         self._all_tools: List[Dict[str, Any]] = []
+        self._data_lake_dict: Dict[str, str] = {}
+        self._library_dict: Dict[str, str] = {}
+        self._know_how_docs: List[Dict[str, str]] = []
         self._initialized = False
 
     @classmethod
@@ -95,6 +99,27 @@ class BiomniToolLoader:
                     # Tag each tool with its module for import paths
                     tool.setdefault("module", module_name)
                 self._all_tools.extend(tools)
+            # Load data_lake and library registries from Biomni env_desc
+            try:
+                from biomni.env_desc import data_lake_dict, library_content_dict
+                self._data_lake_dict = data_lake_dict
+                self._library_dict = library_content_dict
+                logger.info(
+                    f"Loaded env_desc: {len(data_lake_dict)} data_lake, "
+                    f"{len(library_content_dict)} libraries"
+                )
+            except ImportError:
+                logger.warning("biomni.env_desc not available — data_lake/libraries empty")
+
+            # Load know-how documents
+            try:
+                from biomni.know_how.loader import KnowHowLoader
+                kh_loader = KnowHowLoader()
+                self._know_how_docs = kh_loader.get_document_summaries()
+                logger.info(f"Loaded {len(self._know_how_docs)} know-how documents")
+            except (ImportError, Exception) as kh_err:
+                logger.warning(f"Know-how loader not available: {kh_err}")
+
             self._initialized = True
             logger.info(
                 f"BiomniToolLoader initialized: {len(self._module2api)} modules, "
@@ -116,26 +141,37 @@ class BiomniToolLoader:
         return self._module2api
 
     def format_tool_desc(self, tools: List[Dict[str, Any]]) -> str:
-        """Format selected tools as Section [G] Function Dictionary text.
+        """Format selected tools using Biomni's textify_api_dict format.
 
-        Each line: ``- module.func_name(param1: type, param2: type): description``
+        Produces detailed output with Import file, Method, Required/Optional
+        Parameters, descriptions, and default values — matching the format
+        the model was trained on.
         """
         if not tools:
             return ""
-        lines = []
-        for t in tools:
-            module = t.get("module", "unknown")
-            name = t.get("name", "unknown")
-            desc = t.get("description", "")
-            # Truncate long descriptions
-            if len(desc) > 300:
-                desc = desc[:297] + "..."
-            params = ", ".join(
-                f"{p.get('name', '?')}: {p.get('type', 'Any')}"
-                for p in t.get("required_parameters", [])
-            )
-            lines.append(f"- {module}.{name}({params}): {desc}")
-        return "\n".join(lines)
+        try:
+            from biomni.utils import textify_api_dict
+            # Group tools by module (same structure as read_module2api output)
+            grouped: Dict[str, List[Dict[str, Any]]] = {}
+            for t in tools:
+                module = t.get("module", "unknown")
+                grouped.setdefault(module, []).append(t)
+            return textify_api_dict(grouped)
+        except ImportError:
+            # Fallback: simple one-line format if biomni not available
+            lines = []
+            for t in tools:
+                module = t.get("module", "unknown")
+                name = t.get("name", "unknown")
+                desc = t.get("description", "")
+                if len(desc) > 300:
+                    desc = desc[:297] + "..."
+                params = ", ".join(
+                    f"{p.get('name', '?')}: {p.get('type', 'Any')}"
+                    for p in t.get("required_parameters", [])
+                )
+                lines.append(f"- {module}.{name}({params}): {desc}")
+            return "\n".join(lines)
 
     def keyword_search(
         self, query: str, max_results: int = 15
@@ -185,34 +221,73 @@ class BiomniToolLoader:
 
     # ─── Training-format retrieval (matches Phase 0 training data) ───
 
+    # Default top/bottom sections for retrieval prompt (split at AVAILABLE TOOLS)
+    _DEFAULT_TOP = (
+        "You are an expert biomedical research assistant. Your task is to select the relevant resources to help answer a user's query.\n"
+        "\n"
+        "USER QUERY: {user_query}\n"
+        "\n"
+        "{plan_context_block}"
+        "Below are the available resources. For each category, select items that are directly or indirectly relevant to answering the query.\n"
+        "Be generous in your selection - include resources that might be useful for the task, even if they're not explicitly mentioned in the query.\n"
+        "It's better to include slightly more resources than to miss potentially useful ones.\n"
+        "\n"
+        "You MUST output ONLY in the #OUTPUT FORMAT shown at the end. No other text."
+    )
+
+    _DEFAULT_BOTTOM = (
+        "#OUTPUT FORMAT\n"
+        "Respond with ONLY the indices. No explanation, no markdown, no reasoning.\n"
+        "\n"
+        "TOOLS: [comma-separated indices]\n"
+        "DATA_LAKE: [comma-separated indices]\n"
+        "LIBRARIES: [comma-separated indices]\n"
+        "KNOW_HOW: [comma-separated indices]\n"
+        "\n"
+        "#EXAMPLE\n"
+        "TOOLS: [0, 3, 5, 7, 9, 12, 15, 18, 20]\n"
+        "DATA_LAKE: [1, 2, 4]\n"
+        "LIBRARIES: [0, 2, 4, 5, 8]\n"
+        "KNOW_HOW: [0, 1]\n"
+        "\n"
+        "#GUIDELINES\n"
+        "- Be generous: include all potentially relevant resources\n"
+        "- ALWAYS prioritize database tools for general queries\n"
+        "- Include all literature search tools\n"
+        "- For wet lab/sequence queries, ALWAYS include molecular biology tools\n"
+        "- For data lake, include datasets that could provide useful information\n"
+        "- For libraries, include those providing functions needed for analysis\n"
+        "- For know-how, include relevant protocols and best practices\n"
+        "- When in doubt, include rather than exclude\n"
+        "- Empty category = empty list, e.g. DATA_LAKE: []"
+    )
+
     def build_retrieval_prompt(
         self, user_query: str, plan_context: str = "",
         data_lake_items: Optional[List[Dict[str, str]]] = None,
+        top_override: Optional[str] = None,
+        bottom_override: Optional[str] = None,
     ) -> str:
         """Build a retrieval system prompt matching the training data format.
 
         This produces the EXACT same format as tool_retrieval_sys_prompt.txt
         that the model was trained on (Phase 0 in output_formatted.json).
+
+        top_override / bottom_override: custom user edits from DB.
         """
-        lines = [
-            "You are an expert biomedical research assistant. Your task is to select the relevant resources to help answer a user's query. Also, when using tools, make sure to explain the reasons for using these tools and explain it concisely and rigorously.",
-            "",
-            f"USER QUERY: {user_query}",
-            "",
-        ]
+        # --- Top section ---
+        plan_context_block = ""
         if plan_context:
-            lines.extend([
-                "PLAN CONTEXT:",
-                plan_context,
-                "",
-            ])
-        lines.extend([
-            "Below are the available resources. For each category, select items that are directly or indirectly relevant to answering the query.",
-            "Be generous in your selection - include resources that might be useful for the task, even if they're not explicitly mentioned in the query.",
-            "It's better to include slightly more resources than to miss potentially useful ones.",
-            "",
-            "AVAILABLE TOOLS:",
-        ])
+            plan_context_block = f"PLAN CONTEXT:\n{plan_context}\n\n"
+
+        top_template = top_override if top_override else self._DEFAULT_TOP
+        top = top_template.replace("{user_query}", user_query)
+        top = top.replace("{plan_context_block}", plan_context_block)
+        # Clean up leftover placeholder if no plan_context
+        top = top.replace("{plan_context}", plan_context or "")
+
+        # --- Middle section (auto-generated from env_desc + tools) ---
+        lines = ["", "AVAILABLE TOOLS:"]
         for idx, tool in enumerate(self._all_tools):
             name = tool.get("name", "unknown")
             desc = tool.get("description", "")
@@ -220,44 +295,51 @@ class BiomniToolLoader:
                 desc = desc[:197] + "..."
             lines.append(f"{idx}. {name}: {desc}")
 
+        # DATA LAKE: use env_desc registry, merge with scan results for custom data
         lines.append("")
         lines.append("AVAILABLE DATA LAKE ITEMS:")
+        dl_items = list(self._data_lake_dict.items())
+        # Merge scan results not in registry
+        registered_names = set(self._data_lake_dict.keys())
         if data_lake_items:
-            for idx, item in enumerate(data_lake_items):
-                name = item.get("name", "unknown")
-                desc = item.get("description", "")
+            for item in data_lake_items:
+                if item.get("name") not in registered_names:
+                    dl_items.append((item["name"], item.get("description", "")))
+        if dl_items:
+            for idx, (name, desc) in enumerate(dl_items):
                 if desc:
                     lines.append(f"{idx}. {name}: {desc}")
                 else:
                     lines.append(f"{idx}. {name}")
         else:
             lines.append("(none)")
+
+        # LIBRARIES: use env_desc registry
         lines.append("")
         lines.append("AVAILABLE SOFTWARE LIBRARIES:")
-        lines.append("(none)")
+        if self._library_dict:
+            for idx, (name, desc) in enumerate(self._library_dict.items()):
+                lines.append(f"{idx}. {name}: {desc}")
+        else:
+            lines.append("(none)")
+
+        # KNOW-HOW: documents from KnowHowLoader
         lines.append("")
-        lines.append(
-            "Your response MUST contain ONLY the following three lines and NOTHING else:\n"
-            "TOOLS: [comma-separated indices]\n"
-            "DATA_LAKE: [comma-separated indices]\n"
-            "LIBRARIES: [comma-separated indices]\n"
-            "\n"
-            "Example:\n"
-            "TOOLS: [0, 3, 5, 7, 9]\n"
-            "DATA_LAKE: [1, 2]\n"
-            "LIBRARIES: []\n"
-            "\n"
-            "Do NOT write any explanation, reasoning, or text outside these three lines.\n"
-            "If a category has no relevant items, use an empty list [].\n"
-            "\n"
-            "SELECTION GUIDELINES:\n"
-            "1. Be generous but not excessive\n"
-            "2. ALWAYS prioritize database tools for general queries\n"
-            "3. Include all literature search tools for search/review queries\n"
-            "4. For wet lab queries, ALWAYS include molecular biology tools\n"
-            "5. When in doubt, include rather than exclude"
-        )
-        return "\n".join(lines)
+        lines.append("AVAILABLE KNOW-HOW DOCUMENTS (Best Practices & Protocols):")
+        if self._know_how_docs:
+            for idx, doc in enumerate(self._know_how_docs):
+                name = doc.get("name", "unknown")
+                desc = doc.get("description", "")
+                lines.append(f"{idx}. {name}: {desc}")
+        else:
+            lines.append("(none)")
+
+        middle = "\n".join(lines)
+
+        # --- Bottom section ---
+        bottom = bottom_override if bottom_override else self._DEFAULT_BOTTOM
+
+        return top + "\n" + middle + "\n\n" + bottom
 
     @staticmethod
     def _parse_indices(match_str: str, items: list, max_count: int) -> list:
@@ -271,10 +353,48 @@ class BiomniToolLoader:
                     indices.append(idx)
         return [items[i] for i in indices[:max_count]]
 
+    @staticmethod
+    def _extract_indices_flexible(
+        content: str, category: str, next_categories: List[str], max_idx: int
+    ) -> List[int]:
+        """Extract indices for a category from free-form LLM output.
+
+        Finds the region between `category` keyword and the next category keyword,
+        then extracts all integers from that region.
+        """
+        # Build pattern to find category header (flexible: **TOOLS**, TOOLS:, TOOLS -, etc.)
+        cat_pattern = re.compile(
+            rf"\*?\*?{category}\*?\*?\s*[-:]\s*", re.IGNORECASE
+        )
+        cat_match = cat_pattern.search(content)
+        if not cat_match:
+            return []
+
+        start = cat_match.end()
+
+        # Find where next category starts (or end of content)
+        end = len(content)
+        for nc in next_categories:
+            nc_pattern = re.compile(rf"\*?\*?{nc}\*?\*?\s*[-:]", re.IGNORECASE)
+            nc_match = nc_pattern.search(content, start)
+            if nc_match and nc_match.start() < end:
+                end = nc_match.start()
+
+        region = content[start:end]
+        # Extract all integers from the region
+        indices = []
+        for num_str in re.findall(r"\d+", region):
+            idx = int(num_str)
+            if 0 <= idx < max_idx and idx not in indices:
+                indices.append(idx)
+        return indices
+
     async def retrieval_with_llm(
         self, query: str, llm: Any, max_tools: int = 15,
         plan_context: str = "",
         data_lake_items: Optional[List[Dict[str, str]]] = None,
+        top_override: Optional[str] = None,
+        bottom_override: Optional[str] = None,
     ) -> RetrievalResult:
         """Run tool retrieval using the training-data-compatible prompt format.
 
@@ -284,7 +404,10 @@ class BiomniToolLoader:
         from langchain_core.messages import HumanMessage
 
         data_lake_items = data_lake_items or []
-        prompt = self.build_retrieval_prompt(query, plan_context, data_lake_items)
+        prompt = self.build_retrieval_prompt(
+            query, plan_context, data_lake_items,
+            top_override=top_override, bottom_override=bottom_override,
+        )
 
         try:
             if hasattr(llm, "ainvoke"):
@@ -298,48 +421,76 @@ class BiomniToolLoader:
 
             logger.info(f"Retrieval LLM response ({len(content)} chars): {content[:200]}")
 
-            # Parse TOOLS: [indices] — try bracketed first, then bare numbers
-            selected_tools: List[Dict[str, Any]] = []
-            tools_match = re.search(r"TOOLS:\s*\[(.*?)\]", content, re.IGNORECASE)
-            if not tools_match:
-                tools_match = re.search(r"TOOLS:\s*([0-9][\d\s,]*)", content, re.IGNORECASE)
-            if tools_match and tools_match.group(1).strip():
-                selected_tools = self._parse_indices(
-                    tools_match.group(1), self._all_tools, max_tools
-                )
+            # Build reference lists matching build_retrieval_prompt index order
+            dl_list = [{"name": n, "description": d} for n, d in self._data_lake_dict.items()]
+            registered_names = set(self._data_lake_dict.keys())
+            for item in data_lake_items:
+                if item.get("name") not in registered_names:
+                    dl_list.append(item)
+            lib_list = [{"name": n, "description": d} for n, d in self._library_dict.items()]
 
-            # Parse DATA_LAKE: [indices] — try bracketed first, then bare numbers
-            selected_data_lake: List[Dict[str, str]] = []
-            dl_match = re.search(r"DATA_LAKE:\s*\[(.*?)\]", content, re.IGNORECASE)
-            if not dl_match:
-                dl_match = re.search(r"DATA_LAKE:\s*([0-9][\d\s,]*)", content, re.IGNORECASE)
-            if dl_match and dl_match.group(1).strip() and data_lake_items:
-                selected_data_lake = self._parse_indices(
-                    dl_match.group(1), data_lake_items, 20
-                )
+            # --- Strategy 1: Strict regex (TOOLS: [0, 3, 5] or TOOLS: 0, 3, 5) ---
+            def _strict_parse(cat_key: str, items: list, max_n: int) -> list:
+                m = re.search(rf"{cat_key}:\s*\[(.*?)\]", content, re.IGNORECASE)
+                if not m:
+                    m = re.search(rf"{cat_key}:\s*([0-9][\d\s,]*)", content, re.IGNORECASE)
+                if m and m.group(1).strip() and items:
+                    return self._parse_indices(m.group(1), items, max_n)
+                return []
 
-            # Parse LIBRARIES: [indices] — try bracketed first, then bare numbers
-            selected_libraries: List[Dict[str, str]] = []
-            lib_match = re.search(r"LIBRARIES:\s*\[(.*?)\]", content, re.IGNORECASE)
-            if not lib_match:
-                lib_match = re.search(r"LIBRARIES:\s*([0-9][\d\s,]*)", content, re.IGNORECASE)
-            if lib_match and lib_match.group(1).strip():
-                # No library items to map yet; placeholder for future
-                pass
+            selected_tools = _strict_parse("TOOLS", self._all_tools, max_tools)
+            selected_data_lake = _strict_parse("DATA_LAKE", dl_list, 20)
+            selected_libraries = _strict_parse("LIBRARIES", lib_list, 30)
+            selected_know_how = _strict_parse("KNOW_HOW", self._know_how_docs, 5)
 
-            if selected_tools or selected_data_lake or selected_libraries:
+            if selected_tools or selected_data_lake or selected_libraries or selected_know_how:
                 logger.info(
-                    f"LLM retrieval: {len(selected_tools)} tools, "
+                    f"LLM retrieval (strict): {len(selected_tools)} tools, "
                     f"{len(selected_data_lake)} data_lake, "
-                    f"{len(selected_libraries)} libraries"
+                    f"{len(selected_libraries)} libraries, "
+                    f"{len(selected_know_how)} know_how"
                 )
                 return RetrievalResult(
                     tools=selected_tools,
                     data_lake=selected_data_lake,
                     libraries=selected_libraries,
+                    know_how=selected_know_how,
                 )
 
-            # Try parsing as JSON fallback
+            # --- Strategy 2: Flexible extraction from free-form output ---
+            categories = ["TOOLS", "DATA_LAKE", "LIBRARIES", "KNOW_HOW"]
+            tool_idxs = self._extract_indices_flexible(
+                content, "TOOLS", ["DATA_LAKE", "LIBRARIES", "KNOW_HOW"], len(self._all_tools)
+            )
+            dl_idxs = self._extract_indices_flexible(
+                content, "DATA_LAKE", ["LIBRARIES", "KNOW_HOW", "TOOLS"], len(dl_list)
+            )
+            lib_idxs = self._extract_indices_flexible(
+                content, "LIBRARIES", ["KNOW_HOW", "TOOLS", "DATA_LAKE"], len(lib_list)
+            )
+            kh_idxs = self._extract_indices_flexible(
+                content, "KNOW_HOW", ["TOOLS", "DATA_LAKE", "LIBRARIES"], len(self._know_how_docs)
+            )
+
+            if tool_idxs or dl_idxs or lib_idxs or kh_idxs:
+                selected_tools = [self._all_tools[i] for i in tool_idxs[:max_tools]]
+                selected_data_lake = [dl_list[i] for i in dl_idxs[:20]] if dl_list else []
+                selected_libraries = [lib_list[i] for i in lib_idxs[:30]] if lib_list else []
+                selected_know_how = [self._know_how_docs[i] for i in kh_idxs[:5]] if self._know_how_docs else []
+                logger.info(
+                    f"LLM retrieval (flexible): {len(selected_tools)} tools, "
+                    f"{len(selected_data_lake)} data_lake, "
+                    f"{len(selected_libraries)} libraries, "
+                    f"{len(selected_know_how)} know_how"
+                )
+                return RetrievalResult(
+                    tools=selected_tools,
+                    data_lake=selected_data_lake,
+                    libraries=selected_libraries,
+                    know_how=selected_know_how,
+                )
+
+            # --- Strategy 3: JSON fallback ---
             try:
                 parsed = json.loads(content)
                 if isinstance(parsed, dict) and "tools" in parsed:
@@ -351,13 +502,17 @@ class BiomniToolLoader:
                             tools=selected[:max_tools],
                             data_lake=[],
                             libraries=[],
+                            know_how=[],
                         )
             except (json.JSONDecodeError, TypeError):
                 pass
 
-            logger.warning("LLM retrieval: could not parse response, falling back to keyword search")
+            logger.warning(
+                f"LLM retrieval: could not parse response, falling back to keyword search. "
+                f"Full response:\n{content}"
+            )
         except Exception as e:
             logger.warning(f"LLM retrieval failed: {e}")
 
         fallback_tools = self.keyword_search(query, max_results=max_tools)
-        return RetrievalResult(tools=fallback_tools, data_lake=[], libraries=[])
+        return RetrievalResult(tools=fallback_tools, data_lake=[], libraries=[], know_how=[])

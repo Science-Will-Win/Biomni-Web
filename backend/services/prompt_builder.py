@@ -269,13 +269,41 @@ Your task is ONLY to create a plan. Do NOT execute the plan or write any code.
 Create an efficient plan with at least 4 and at most 8 steps.
 Each step MUST use the format "Short name: detailed description" with a colon separator.
 
-# EXAMPLE (for reference only, do not copy)
+#RULES
+- The plan describes WHAT TO DO, never the answer itself.
+- NEVER include actual answers, solutions, computed results, gene names, drug names, protein names, specific values, or code in the plan steps.
+- Each step must describe an ACTION to perform (e.g., "Query database X to find Y"), not a CONCLUSION (e.g., "Gene ABC is associated with disease XYZ").
+- WRONG: "Identify TP53 as the key tumor suppressor gene" — this is an answer, not a plan step.
+- RIGHT: "Query gene-disease databases to identify candidate tumor suppressor genes" — this is an action.
+- WRONG: "The IC50 value is 2.5 μM for compound X" — this is a result.
+- RIGHT: "Calculate IC50 values from the dose-response data" — this is an action.
+- If you already know the answer, you MUST still plan the steps to VERIFY it using tools and data, not state it directly.
+
+# EXAMPLE 1 (simple analysis, for reference only)
 
 Goal: Analyze gene expression patterns in red blood cell development
 1. [ ] Data collection: Gather relevant datasets from public databases and repositories for analysis
 2. [ ] Gene function analysis: Research the biological functions of each gene in relation to the target pathway
 3. [ ] Statistical modeling: Apply statistical methods to identify significant patterns in the data
 4. [ ] Results visualization: Create figures and plots to present the findings clearly
+
+# EXAMPLE 2 (disease-gene investigation, for reference only)
+
+Goal: Identify candidate genes associated with a rare cardiac disorder
+1. [ ] Literature search: Query biomedical literature databases to find publications related to the disorder and known genetic associations
+2. [ ] Gene-disease mapping: Use gene-disease association databases to retrieve genes linked to the phenotype and related conditions
+3. [ ] Pathway analysis: Analyze the biological pathways involving the candidate genes to identify functional relationships
+4. [ ] Variant annotation: Annotate candidate variants using population frequency and pathogenicity prediction databases
+5. [ ] Summary and ranking: Aggregate evidence across sources and rank candidate genes by strength of association
+
+# EXAMPLE 3 (data analysis workflow, for reference only)
+
+Goal: Analyze differential gene expression between treatment and control groups
+1. [ ] Data retrieval: Download the relevant expression dataset from the data lake and load it into a dataframe
+2. [ ] Quality control: Perform data cleaning, normalization, and exploratory analysis to ensure data integrity
+3. [ ] Statistical testing: Apply appropriate statistical tests to identify differentially expressed genes between groups
+4. [ ] Functional enrichment: Run gene ontology and pathway enrichment analysis on the significant gene set
+5. [ ] Visualization: Generate volcano plots, heatmaps, and pathway diagrams to summarize the results
 
 """
 

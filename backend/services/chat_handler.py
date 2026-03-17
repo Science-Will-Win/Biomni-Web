@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 from typing import AsyncGenerator, Dict, Any, List, Optional, Tuple
 from uuid import UUID
@@ -415,12 +416,21 @@ def _extract_plan_from_text(text: str, user_message: str) -> Optional[Dict[str, 
                 pass
 
     # Helper: split "Name: description" or "Name - description"
+    # If separator appears 2+ times (e.g. "short name: real name: description"),
+    # use the last two parts as (name, description).
     def _split_name_desc(txt: str) -> tuple:
         for sep in (":", "：", " - ", " – "):
             if sep in txt:
-                parts = txt.split(sep, 1)
-                name_part = parts[0].strip()
-                desc_part = parts[1].strip() if len(parts) > 1 else ""
+                parts = txt.split(sep)
+                if len(parts) >= 3:
+                    # "short name: real name: description" → last 2 parts
+                    name_part = parts[-2].strip()
+                    desc_part = parts[-1].strip()
+                elif len(parts) == 2:
+                    name_part = parts[0].strip()
+                    desc_part = parts[1].strip()
+                else:
+                    continue
                 if name_part and len(name_part) >= 3 and desc_part:
                     return (name_part[:100], desc_part.split("\n")[0][:500])
         # No separator found: smart truncation for long lines
@@ -936,26 +946,48 @@ class ChatHandler:
                 # Cap max_tokens for retrieval — only needs short index list output
                 llm = await llm_service.get_llm_instance(db=db, max_tokens=8192)
                 logger.info("Calling retrieval_with_llm ...")
+                # Load custom retrieval prompt overrides from DB
+                top_override = None
+                bottom_override = None
+                try:
+                    from sqlalchemy import select as sa_select
+                    from models.setting import Setting
+                    result = await db.execute(sa_select(Setting).where(Setting.key == "system_prompt_modes"))
+                    row = result.scalar_one_or_none()
+                    if row and row.value:
+                        model_name = llm_service.get_current_model().name
+                        custom_raw = row.value.get(model_name, {}).get("tool_retrieval", "")
+                        if custom_raw and "===AUTO_TOOLS===" in custom_raw:
+                            parts = custom_raw.split("===AUTO_TOOLS===", 1)
+                            top_override = parts[0].strip("\n") or None
+                            bottom_override = parts[1].strip("\n") or None if len(parts) > 1 else None
+                except Exception as e:
+                    logger.debug(f"Could not load custom retrieval prompt: {e}")
                 retrieval_result = await biomni_loader.retrieval_with_llm(
                     retrieval_query, llm, max_tools=15,
                     data_lake_items=data_lake_items,
+                    top_override=top_override,
+                    bottom_override=bottom_override,
                 )
                 logger.info(f"retrieval_with_llm returned: {len(retrieval_result.get('tools', []))} tools")
             else:
                 kw_tools = biomni_loader.keyword_search(retrieval_query, max_results=15)
-                retrieval_result = {"tools": kw_tools, "data_lake": [], "libraries": []}
+                retrieval_result = {"tools": kw_tools, "data_lake": [], "libraries": [], "know_how": []}
 
             selected_tools = retrieval_result["tools"]
             selected_data_lake = retrieval_result["data_lake"]
             selected_libraries = retrieval_result["libraries"]
+            selected_know_how = retrieval_result.get("know_how", [])
             tool_desc = biomni_loader.format_tool_desc(selected_tools)
             retrieved_tool_names = [t.get("name", "?") for t in selected_tools]
             retrieved_data_lake_names = [d.get("name", "?") for d in selected_data_lake]
             retrieved_library_names = [l.get("name", "?") for l in selected_libraries]
+            retrieved_know_how_names = [k.get("name", "?") for k in selected_know_how]
             logger.info(
                 f"Plan retrieval: {len(retrieved_tool_names)} tools, "
                 f"{len(retrieved_data_lake_names)} data_lake, "
-                f"{len(retrieved_library_names)} libraries"
+                f"{len(retrieved_library_names)} libraries, "
+                f"{len(retrieved_know_how_names)} know_how"
             )
         else:
             tool_desc = ""
@@ -964,11 +996,13 @@ class ChatHandler:
         plan_state["_retrieved_tool_names"] = retrieved_tool_names
         plan_state["_retrieved_data_lake_names"] = retrieved_data_lake_names
         plan_state["_retrieved_library_names"] = retrieved_library_names
+        plan_state["_retrieved_know_how_names"] = retrieved_know_how_names
 
         yield _ev("tool_retrieval_done", {"tool_retrieval_done": {
             "tools": retrieved_tool_names,
             "data_lake": retrieved_data_lake_names,
             "libraries": retrieved_library_names,
+            "know_how": retrieved_know_how_names,
         }})
 
         # ── Get A1 agent ──
@@ -1070,12 +1104,18 @@ class ChatHandler:
                 else f"- {l.get('name', '')}"
                 for l in selected_libraries
             )
+            kh_content = [
+                f"- {k.get('name', '')}: {k.get('description', '')}" if k.get("description")
+                else f"- {k.get('name', '')}"
+                for k in selected_know_how
+            ] if selected_know_how else None
             base_prompt = build_prompt(
                 PromptMode.FULL,
                 token_format=behavior,
                 data_lake_path=data_lake_path,
                 data_lake_content=dl_content,
                 library_content=lib_content,
+                know_how_docs=kh_content,
                 is_retrieval=bool(tool_desc),
                 is_step_execution=True,
                 self_critic=True,

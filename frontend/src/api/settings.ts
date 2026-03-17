@@ -41,8 +41,11 @@ export interface ComposedPromptData {
   composed: string;
   sections: PromptSection[];
   custom: string;
-  editable_instruction?: string;
-  readonly_part?: string;
+  editable_top?: string;
+  readonly_middle?: string;
+  editable_bottom?: string;
+  default_top?: string;
+  default_bottom?: string;
 }
 
 export interface ComposedPromptsResponse {
