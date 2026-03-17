@@ -173,6 +173,21 @@ class BiomniToolLoader:
                 lines.append(f"- {module}.{name}({params}): {desc}")
             return "\n".join(lines)
 
+    _KEYWORD_STOP = {
+        "the", "and", "for", "with", "from", "that", "this", "are",
+        "was", "were", "has", "have", "been", "will", "can", "may",
+        "use", "using", "used", "based", "data", "find", "identify",
+        "search", "analyze", "perform", "check", "review", "related",
+    }
+
+    def _extract_keywords(self, query: str) -> List[str]:
+        """Tokenize query into lowercase keywords (3+ chars), remove stop words."""
+        return [
+            w.lower()
+            for w in re.split(r"\W+", query)
+            if len(w) >= 3 and w.lower() not in self._KEYWORD_STOP
+        ]
+
     def keyword_search(
         self, query: str, max_results: int = 15
     ) -> List[Dict[str, Any]]:
@@ -184,18 +199,7 @@ class BiomniToolLoader:
         if not self._all_tools:
             return []
 
-        # Tokenize query into lowercase keywords (3+ chars), remove stop words
-        _STOP = {
-            "the", "and", "for", "with", "from", "that", "this", "are",
-            "was", "were", "has", "have", "been", "will", "can", "may",
-            "use", "using", "used", "based", "data", "find", "identify",
-            "search", "analyze", "perform", "check", "review", "related",
-        }
-        keywords = [
-            w.lower()
-            for w in re.split(r"\W+", query)
-            if len(w) >= 3 and w.lower() not in _STOP
-        ]
+        keywords = self._extract_keywords(query)
         if not keywords:
             return []
 
@@ -218,6 +222,21 @@ class BiomniToolLoader:
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return [t for _, t in scored[:max_results]]
+
+    def _keyword_search_dict(
+        self, query_keywords: List[str], source: Dict[str, str], max_results: int = 10
+    ) -> List[Dict[str, str]]:
+        """Keyword-match items from a name→description dict (data_lake, libraries)."""
+        if not source or not query_keywords:
+            return []
+        scored: List[tuple] = []
+        for name, desc in source.items():
+            text = f"{name} {desc}".lower()
+            score = sum(2 if kw in name.lower() else 1 for kw in query_keywords if kw in text)
+            if score > 0:
+                scored.append((score, {"name": name, "description": desc}))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [item for _, item in scored[:max_results]]
 
     # ─── Training-format retrieval (matches Phase 0 training data) ───
 
@@ -515,4 +534,16 @@ class BiomniToolLoader:
             logger.warning(f"LLM retrieval failed: {e}")
 
         fallback_tools = self.keyword_search(query, max_results=max_tools)
-        return RetrievalResult(tools=fallback_tools, data_lake=[], libraries=[], know_how=[])
+        kw = self._extract_keywords(query)
+        fallback_dl = self._keyword_search_dict(kw, self._data_lake_dict, max_results=10)
+        fallback_libs = self._keyword_search_dict(kw, self._library_dict, max_results=10)
+        logger.info(
+            f"Keyword fallback: {len(fallback_tools)} tools, "
+            f"{len(fallback_dl)} data_lake, {len(fallback_libs)} libraries"
+        )
+        return RetrievalResult(
+            tools=fallback_tools,
+            data_lake=fallback_dl,
+            libraries=fallback_libs,
+            know_how=[],
+        )

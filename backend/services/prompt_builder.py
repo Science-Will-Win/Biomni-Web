@@ -232,6 +232,25 @@ CRITICAL VERIFICATION:
 - Question assumptions: just because a previous step marked something as complete does not mean the result is correct or optimal.
 - Do NOT assume or guess conclusions. You MUST use tools to obtain actual data, then verify and base your answers strictly on tool outputs and execution results, not on preconceived expectations.
 
+EVIDENCE-BASED ANSWERS ONLY:
+- Your final answer MUST be supported by actual results from the data lake or tool execution output. Conclusions not backed by data lake evidence are INVALID.
+- If your code returns EMPTY results, do NOT proceed with assumptions. Instead:
+  1. Check for typos or exact-match issues (use partial/fuzzy matching: str.contains with case=False)
+  2. Inspect the actual column values (print unique values, check dtypes)
+  3. Try alternative search strategies before concluding data is unavailable
+- If you CANNOT find the answer in the data lake after exhaustive search, explicitly state "No data found" — do NOT fabricate or assume values.
+- WRONG: "Assuming p-value is 0.0001..." — NEVER assume numerical values.
+- RIGHT: Run code to extract actual values from data lake, then report what the data shows.
+
+CANDIDATE VERIFICATION:
+- When given a list of candidates (variants, genes, compounds, etc.), verify each candidate INDIVIDUALLY, not all at once.
+- WRONG: Filter with all candidates combined (e.g., str.contains('|'.join(items))) — errors affect all results silently.
+- RIGHT: Check each candidate one by one, or use .isin() for exact matching of multiple values.
+- If ALL candidates return empty results, inspect the raw data first:
+  1. Print a few sample values from the relevant column to understand its format
+  2. Check if the column contains numeric IDs vs string IDs (e.g., 507080 vs "rs507080")
+  3. Adjust your search accordingly (strip prefixes, convert types, etc.)
+
 You may or may not receive feedbacks from human. If so, address the feedbacks by following the same procedure of multiple rounds of thinking, execution, and then coming up with a new solution."""
 
 
@@ -414,7 +433,17 @@ def _build_env_resources_section(
         library_intro = "Based on your query, I've identified the following most relevant libraries that you can use:"
         import_instruction = ("IMPORTANT: When using any function, you MUST first import it from its exact module as listed in the dictionary.\n"
                               "DO NOT import functions from 'biomni_data'. 'biomni_data' is a directory for datasets, not a python module.\n"
-                              "For example: from [module_name] import [function_name]")
+                              "For example: from [module_name] import [function_name]\n"
+                              "\n"
+                              "PARAMETER RULES:\n"
+                              "- Use ONLY the parameters listed in the Function Dictionary above.\n"
+                              "- Required parameters MUST be provided. Optional parameters have defaults — omit them unless you need a different value.\n"
+                              "- Pass parameters by name (keyword arguments) to avoid ordering mistakes.\n"
+                              "- Example: result = query_pubmed(query=\"cancer biomarkers\", max_papers=5)\n"
+                              "- Do NOT invent parameter names that are not in the dictionary.\n"
+                              "\n"
+                              "CRITICAL: You may ONLY use functions listed in the Function Dictionary above. "
+                              "Do NOT invent or guess function names. If a function is not in the dictionary, it does not exist.")
     else:
         function_intro = "In your code, you will need to import the function location using the following dictionary of functions:"
         data_lake_intro = "You can write code to understand the data, process and utilize it for the task. Here is the list of datasets:"

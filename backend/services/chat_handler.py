@@ -52,9 +52,23 @@ def _fix_biomni_imports(code: str, mapping: Dict[str, str]) -> Tuple[str, List[s
         groups: Dict[str, List[str]] = {}
         for fn in func_names:
             correct = mapping.get(fn)
+            resolved_fn = fn
+
+            # Fuzzy match: model writes "encode" but actual function is "query_encode"
+            if not correct:
+                candidates = [k for k in mapping if k.endswith('_' + fn) or k.endswith(fn)]
+                if len(candidates) == 1:
+                    resolved_fn = candidates[0]
+                    correct = mapping[resolved_fn]
+
             if correct and correct != original_module:
-                corrections.append(f"{fn}: {original_module} → {correct}")
-                groups.setdefault(correct, []).append(fn)
+                corrections.append(f"{fn} → {resolved_fn}: {original_module} → {correct}")
+                groups.setdefault(correct, []).append(resolved_fn)
+            elif correct:
+                # Module is correct but function name was fuzzy-matched
+                if resolved_fn != fn:
+                    corrections.append(f"{fn} → {resolved_fn} (name corrected)")
+                groups.setdefault(original_module, []).append(resolved_fn)
             else:
                 groups.setdefault(original_module, []).append(fn)
 
@@ -698,20 +712,44 @@ class ChatHandler:
                     }
                     logger.info("Patched A1 LLM with vLLM extra_body (skip_special_tokens)")
 
-            # Patch _traced_run_code to fix biomni imports before execution.
-            # Module-level monkey-patch doesn't work because a1.py binds
-            # run_python_repl via 'from ... import' (value copy, not reference).
-            if self._import_mapping and not getattr(agent, '_import_patched', False):
-                original_run = agent._traced_run_code
-                mapping = self._import_mapping
-                def _patched_traced_run(code: str, timeout: int):
-                    fixed, corrections = _fix_biomni_imports(code, mapping)
-                    if corrections:
-                        logger.info(f"Import auto-fix: {corrections}")
-                    return original_run(fixed, timeout)
-                agent._traced_run_code = _patched_traced_run
-                agent._import_patched = True
-                logger.info("Import fixer applied to A1 agent instance")
+            # Patch run_python_repl at module level in biomni.agent.a1.
+            # Instance-level monkey-patch on _traced_run_code fails because
+            # the @observe (langfuse) decorator prevents instance attribute
+            # shadowing. Instead, we patch the module-global run_python_repl
+            # which _traced_run_code looks up at call time.
+            if self._import_mapping:
+                try:
+                    import biomni.agent.a1 as _a1_module
+                    if not getattr(_a1_module, '_repl_import_patched', False):
+                        _original_repl = _a1_module.run_python_repl
+                        mapping = self._import_mapping
+
+                        def _patched_repl(code):
+                            fixed, corrections = _fix_biomni_imports(code, mapping)
+                            if corrections:
+                                logger.info(f"Import auto-fix (repl): {corrections}")
+
+                            # Warn about unknown functions
+                            import_funcs = re.findall(r'from biomni\S+ import (\w+)', fixed)
+                            unknown = [f for f in import_funcs if f not in mapping]
+
+                            result = _original_repl(fixed)
+
+                            prefix = ""
+                            if corrections:
+                                prefix += "[AUTO-FIX] Imports were automatically corrected.\n"
+                            if unknown:
+                                prefix += f"[WARNING] Functions {unknown} do NOT exist. Use ONLY functions from the Function Dictionary.\n"
+                            if prefix:
+                                result = prefix + result
+
+                            return result
+
+                        _a1_module.run_python_repl = _patched_repl
+                        _a1_module._repl_import_patched = True
+                        logger.info("Import fixer applied at module level (biomni.agent.a1.run_python_repl)")
+                except ImportError:
+                    logger.warning("Could not import biomni.agent.a1 for import fixer patch")
 
             self._active_agents[session_id] = agent
             logger.info(f"Initialized Original A1 Agent for session {session_id} with model {model_name}")
