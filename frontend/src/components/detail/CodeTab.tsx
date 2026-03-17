@@ -5,16 +5,19 @@ import { useTranslation } from "@/i18n";
 import { executeCode, toolCall } from "@/api/tools";
 import { listStepOutputs, getStepOutputUrl } from "@/api/files";
 import { highlightCodeSyntax } from "@/utils/codeHighlight";
+import { recoverBrokenChars } from "@/utils/textClean";
 import type { CodeData, CodeSegment } from "@/types";
 
 /** Strip raw special-token tags that may leak through from model output */
 function stripRawTags(s: string): string {
-  return s
-    .replace(/(?:<\/?execute>|\[\/?EXECUTE\])/gi, "")
-    .replace(/(?:<\/?observation>|\[\/?OBSERVATION\])/gi, "")
-    .replace(/(?:<\/?think>|\[\/?THINK\])/gi, "")
-    .replace(/(?:<\/?solution>|\[\/?SOLUTION\])/gi, "")
-    .trim();
+  return recoverBrokenChars(
+    s
+      .replace(/(?:<\/?execute>|\[\/?EXECUTE\])/gi, "")
+      .replace(/(?:<\/?observation>|\[\/?OBSERVATION\])/gi, "")
+      .replace(/(?:<\/?think>|\[\/?THINK\])/gi, "")
+      .replace(/(?:<\/?solution>|\[\/?SOLUTION\])/gi, "")
+      .trim(),
+  );
 }
 
 export function CodeTab() {
@@ -27,13 +30,22 @@ export function CodeTab() {
   const [selectedStep, setSelectedStep] = useState<"all" | number>("all");
   const [regenerating, setRegenerating] = useState(false);
 
-  const stepIndices = useMemo(
-    () =>
-      Object.keys(data?.codes || {})
-        .map(Number)
-        .sort((a, b) => a - b),
-    [data?.codes],
-  );
+  const stepIndices = useMemo(() => {
+    const allIndices = Object.keys(data?.codes || {})
+      .map(Number)
+      .sort((a, b) => a - b);
+    return allIndices.filter((idx) => {
+      // Show only steps that were actually executed (have results)
+      if (data?.stepExecutions?.[idx]?.length) return true;
+      const cd = data?.codes[idx];
+      if (typeof cd === "object" && cd !== null) {
+        if ((cd as CodeData).execution) return true;
+        if ((cd as CodeData).segments?.some((s) => s.type === "output"))
+          return true;
+      }
+      return false;
+    });
+  }, [data?.codes, data?.stepExecutions]);
 
   if (!data || stepIndices.length === 0) {
     return (
@@ -152,7 +164,6 @@ interface CodeBlockProps {
 interface CodeGroup {
   code: string;
   output: string;
-  isError: boolean;
 }
 
 function groupStepExecs(
@@ -160,18 +171,14 @@ function groupStepExecs(
 ): CodeGroup[] {
   return execs
     .filter((e) => e.code)
-    .map((e) => ({
-      code: e.code!,
-      output: e.observation || "",
-      isError: e.success === false,
-    }));
+    .map((e) => ({ code: e.code!, output: e.observation || "" }));
 }
 
 function groupSegments(segs: CodeSegment[]): CodeGroup[] {
   const groups: CodeGroup[] = [];
   for (const seg of segs) {
     if (seg.type === "code") {
-      groups.push({ code: seg.content, output: "", isError: false });
+      groups.push({ code: seg.content, output: "" });
     } else if (seg.type === "output" && groups.length > 0) {
       groups[groups.length - 1].output = seg.content;
     }
@@ -219,13 +226,19 @@ function CodeBlock({ stepIndex, data, convId }: CodeBlockProps) {
   const isRunning = stepStatus === "running";
 
   // Build code groups from stepExecs (priority 1) or segments (priority 2)
+  // Only show groups that were actually executed (have output)
   const codeGroups: CodeGroup[] = useMemo(() => {
-    if (stepExecs.length > 0) return groupStepExecs(stepExecs);
-    const codeOutputSegs = segments.filter(
-      (s) => s.type === "code" || s.type === "output",
-    );
-    if (codeOutputSegs.length > 0) return groupSegments(codeOutputSegs);
-    return [];
+    let groups: CodeGroup[];
+    if (stepExecs.length > 0) {
+      groups = groupStepExecs(stepExecs);
+    } else {
+      const codeOutputSegs = segments.filter(
+        (s) => s.type === "code" || s.type === "output",
+      );
+      groups = codeOutputSegs.length > 0 ? groupSegments(codeOutputSegs) : [];
+    }
+    // Filter to only groups with output (executed code)
+    return groups.filter((g) => g.output);
   }, [stepExecs, segments]);
 
   const hasGroups = codeGroups.length > 0;
@@ -333,10 +346,7 @@ function CodeBlock({ stepIndex, data, convId }: CodeBlockProps) {
             const groupTitle = `${stepLabel} : code_${i + 1}`;
             const segRes = segmentResults[i];
             return (
-              <div
-                key={i}
-                className={`code-group${group.isError ? " error" : ""}`}
-              >
+              <div key={i} className="code-group">
                 <div className="code-block-header">
                   <span className="code-block-title">{groupTitle}</span>
                   <button

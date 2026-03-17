@@ -252,14 +252,19 @@ export function PlanStepsBox({ toolCalls, toolResults, messageIndex }: Props) {
     sendMessage(userMsg.content, files);
   };
 
-  // Extract solution text from results
-  const allResults = (toolResults || []).map((tr) => ({
+  // Extract solution text from results (merge live toolResults + restored panelResults)
+  const allResults = [
+    ...(toolResults || []),
+    ...(panelResults || []).filter(
+      (pr) => !(toolResults || []).some((tr) => tr.step === pr.step),
+    ),
+  ].map((tr) => ({
     step: tr.step ?? 0,
     tool: tr.tool,
     success: tr.success,
     result: tr.result,
   }));
-  const solutionResult = allResults.find((r) => {
+  const solutionResult = [...allResults].reverse().find((r) => {
     const d = r.result as Record<string, unknown> | null;
     return (
       d &&
@@ -532,6 +537,48 @@ function PlanStepItem({
   );
 }
 
+// ─── Result Meta Line (shared) ───
+
+function ResultMetaLine({
+  obj,
+  stepIndex,
+  appDispatch,
+  t,
+}: {
+  obj: Record<string, unknown>;
+  stepIndex: number;
+  appDispatch: React.Dispatch<import("@/context/AppContext").AppAction>;
+  t: (key: string) => string;
+}) {
+  const duration =
+    typeof obj.duration === "number"
+      ? `${obj.duration.toFixed(1)}s`
+      : undefined;
+  const tokens =
+    typeof obj.tokens === "number" ? `${obj.tokens} tokens` : undefined;
+  const metaText = [duration, tokens].filter(Boolean).join(" · ");
+
+  const handleMoreDetail = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    appDispatch({ type: "SET_ACTIVE_DETAIL_TAB", payload: "outputs" });
+    setTimeout(() => {
+      const el = document.querySelector(
+        `.output-step-section[data-step="${stepIndex + 1}"]`,
+      );
+      el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
+  };
+
+  return (
+    <div className="result-meta-line">
+      <button className="step-more-detail-btn" onClick={handleMoreDetail}>
+        {t("label.more_detail") || "More detail"}
+      </button>
+      {metaText && <span className="result-meta-minimal">{metaText}</span>}
+    </div>
+  );
+}
+
 // ─── Step Result Rendering ───
 
 interface StepResultContentProps {
@@ -651,6 +698,12 @@ function SingleResultView({
           <div className="step-brief-summary">
             <MarkdownContent text={truncated} />
           </div>
+          <ResultMetaLine
+            obj={obj}
+            stepIndex={stepIndex}
+            appDispatch={appDispatch}
+            t={t}
+          />
         </div>
       );
     }
@@ -664,6 +717,12 @@ function SingleResultView({
           <div className="step-brief-summary">
             <MarkdownContent text={String(obj.solution)} />
           </div>
+          <ResultMetaLine
+            obj={obj}
+            stepIndex={stepIndex}
+            appDispatch={appDispatch}
+            t={t}
+          />
         </div>
       );
     }
@@ -725,6 +784,19 @@ function SingleResultView({
               convId={convId}
             />
           )}
+          {obj.execution && (
+            <ExecutionResultInline
+              execution={obj.execution as Record<string, unknown>}
+              stepIndex={stepIndex}
+              convId={convId}
+            />
+          )}
+          <ResultMetaLine
+            obj={obj}
+            stepIndex={stepIndex}
+            appDispatch={appDispatch}
+            t={t}
+          />
         </div>
       );
     }
@@ -740,14 +812,6 @@ function SingleResultView({
         rawSummary.length > 250
           ? extractSummaryHeaders(rawSummary)
           : rawSummary;
-
-      const duration =
-        typeof obj.duration === "number"
-          ? `${obj.duration.toFixed(1)}s`
-          : undefined;
-      const tokens =
-        typeof obj.tokens === "number" ? `${obj.tokens} tokens` : undefined;
-      const metaText = [duration, tokens].filter(Boolean).join(" · ");
 
       return (
         <div className="step-section-minimal">
@@ -765,23 +829,12 @@ function SingleResultView({
             <MiniEfficiencyChart data={obj} />
           )}
           {obj.graph_type === "timeline" && <MiniTimelineChart data={obj} />}
-          <div className="result-meta-line">
-            <button
-              className="step-more-detail-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                appDispatch({
-                  type: "SET_ACTIVE_DETAIL_TAB",
-                  payload: "outputs",
-                });
-              }}
-            >
-              {t("label.more_detail") || "More detail"}
-            </button>
-            {metaText && (
-              <span className="result-meta-minimal">{metaText}</span>
-            )}
-          </div>
+          <ResultMetaLine
+            obj={obj}
+            stepIndex={stepIndex}
+            appDispatch={appDispatch}
+            t={t}
+          />
         </div>
       );
     }
@@ -797,6 +850,12 @@ function SingleResultView({
             {first}
             {more}
           </div>
+          <ResultMetaLine
+            obj={obj}
+            stepIndex={stepIndex}
+            appDispatch={appDispatch}
+            t={t}
+          />
         </div>
       );
     }
@@ -832,6 +891,12 @@ function SingleResultView({
         <div className="step-section-minimal">
           {thinkBlock}
           <pre className="code-stdout">{truncated}</pre>
+          <ResultMetaLine
+            obj={obj}
+            stepIndex={stepIndex}
+            appDispatch={appDispatch}
+            t={t}
+          />
         </div>
       );
     }

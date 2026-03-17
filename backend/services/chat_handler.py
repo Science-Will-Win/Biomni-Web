@@ -8,6 +8,7 @@ from typing import AsyncGenerator, Dict, Any, List, Optional, Tuple
 from uuid import UUID
 
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langgraph.errors import GraphRecursionError
 
 from sqlalchemy import select
 
@@ -94,6 +95,16 @@ def _extract_observation(text: str) -> str:
     return text.strip() if text else ""
 
 
+def _strip_think_from_message(msg) -> 'BaseMessage':
+    """Strip think blocks from a message for LLM input (prevent self-referencing)."""
+    from langchain_core.messages import AIMessage as _AI
+    if isinstance(msg, _AI):
+        c = re.sub(r'\[THINK\][\s\S]*?\[/THINK\]', '', msg.content).strip()
+        c = re.sub(r'<think>[\s\S]*?</think>', '', c, flags=re.IGNORECASE).strip()
+        return _AI(content=c)
+    return msg
+
+
 def _parse_checked_steps(full_response: str, steps: list) -> set:
     """Parse [✓] checklist from LLM response to detect completed step indices.
 
@@ -104,7 +115,7 @@ def _parse_checked_steps(full_response: str, steps: list) -> set:
     """
     checked: set = set()
     # Match patterns: "N. [✓] Step Name (...)" or just "[✓] Step Name"
-    for m in re.finditer(r'\[✓\]\s*(.+?)(?:\s*\(|$)', full_response, re.MULTILINE):
+    for m in re.finditer(r'\[(?:✓|✗|\ufffd+|[●◆◇○■□]+)\]\s*(.+?)(?:\s*\(|$)', full_response, re.MULTILINE):
         name = m.group(1).strip()
         for i, step in enumerate(steps):
             step_name = step.get("name", "")
@@ -132,7 +143,8 @@ def _parse_segments(full_response: str, behavior: Dict[str, Any]) -> List[Dict[s
         "solution": [behavior.get("solution_format") or "<solution>", "<solution>", "[SOLUTION]"],
     }
 
-    blocks: List[Tuple[int, int, str, str]] = []  # (start, end, type, inner)
+    # Phase 1: Find ALL tag matches without overlap filtering
+    all_blocks: List[Tuple[int, int, str, str]] = []  # (start, end, type, inner)
     for seg_type, open_tags in tag_types.items():
         seen: set = set()
         for open_tag in open_tags:
@@ -143,13 +155,26 @@ def _parse_segments(full_response: str, behavior: Dict[str, Any]) -> List[Dict[s
             flags = re.IGNORECASE if open_tag.startswith("<") else 0
             pattern = re.escape(open_tag) + r'([\s\S]*?)' + re.escape(close_tag)
             for m in re.finditer(pattern, full_response, flags):
-                # Prevent overlap with already-matched blocks
+                # Prevent exact-overlap with already-matched blocks (same-level duplicates)
                 overlaps = any(
                     b[0] <= m.start() < b[1] or b[0] < m.end() <= b[1]
-                    for b in blocks
+                    for b in all_blocks
+                    if b[2] == seg_type  # only check same-type overlap
                 )
                 if not overlaps:
-                    blocks.append((m.start(), m.end(), seg_type, m.group(1).strip()))
+                    all_blocks.append((m.start(), m.end(), seg_type, m.group(1).strip()))
+
+    # Phase 2: Remove child blocks that are fully contained within thinking blocks.
+    # This keeps <execute>/<observation> inside [THINK] as part of think content,
+    # so SpecialTokenBlock.processThinkContent() can render them as code/blockquote.
+    thinking_ranges = [(b[0], b[1]) for b in all_blocks if b[2] == "thinking"]
+    blocks: List[Tuple[int, int, str, str]] = [
+        b for b in all_blocks
+        if b[2] == "thinking" or not any(
+            t[0] <= b[0] and b[1] <= t[1]
+            for t in thinking_ranges
+        )
+    ]
 
     blocks.sort(key=lambda x: x[0])
 
@@ -997,6 +1022,7 @@ class ChatHandler:
                 library_content=lib_content,
                 is_retrieval=bool(tool_desc),
                 is_step_execution=True,
+                self_critic=True,
             )
             if available_tools_text:
                 base_prompt += "\n\n" + available_tools_text
@@ -1013,112 +1039,143 @@ class ChatHandler:
                                                      total_steps=total_steps, all_steps=steps,
                                                      behavior=behavior)
             inputs = {
-                "messages": history + [HumanMessage(content=step_context)],
+                "messages": [_strip_think_from_message(m) for m in history] + [HumanMessage(content=step_context)],
                 "next_step": None,
                 "current_step_number": step_idx + 1,
                 "is_final_step": step_idx == total_steps - 1,
             }
             config = {
-                "recursion_limit": 50,
+                "recursion_limit": 100,
                 "configurable": {"thread_id": f"{conv_id}_step_{step_idx}"},
             }
 
-            # ── Stream A1 events ──
-            full_response = ""
-            step_result = None
-            has_error = False
-            exec_count = 0
+            # ── Stream A1 events (with retry on recursion limit) ──
+            _MAX_RETRIES = 3
+            _retry_succeeded = False
+            for _attempt in range(_MAX_RETRIES):
+                full_response = ""
+                step_result = None
+                has_error = False
+                exec_count = 0
 
-            try:
-                async for event in agent.app.astream_events(inputs, version="v2", config=config):
-                    if self._stop_flags.get(conv_id):
-                        await self._save_plan_complete(conv_id, conv_svc, stopped=True)
-                        yield _ev("done", {"done": True, "stopped": True})
-                        return
+                try:
+                    async for event in agent.app.astream_events(inputs, version="v2", config=config):
+                        if self._stop_flags.get(conv_id):
+                            await self._save_plan_complete(conv_id, conv_svc, stopped=True)
+                            yield _ev("done", {"done": True, "stopped": True})
+                            return
 
-                    kind = event["event"]
+                        kind = event["event"]
 
-                    # LLM token streaming
-                    if kind == "on_chat_model_stream":
-                        content = event["data"]["chunk"].content
-                        chunk_text = ""
-                        if isinstance(content, str):
-                            chunk_text = content
-                        elif isinstance(content, list):
-                            chunk_text = "".join(
-                                b.get("text", "") for b in content if isinstance(b, dict)
-                            )
-                        if chunk_text:
-                            full_response += chunk_text
+                        # LLM token streaming
+                        if kind == "on_chat_model_stream":
+                            content = event["data"]["chunk"].content
+                            chunk_text = ""
+                            if isinstance(content, str):
+                                chunk_text = content
+                            elif isinstance(content, list):
+                                chunk_text = "".join(
+                                    b.get("text", "") for b in content if isinstance(b, dict)
+                                )
+                            if chunk_text:
+                                full_response += chunk_text
 
-                    # Execute node started
-                    elif kind == "on_chain_start" and event.get("name") == "execute":
-                        yield _ev("tool_call", {
-                            "tool_call": {
-                                "name": "code_execution",
-                                "arguments": {},
-                                "status": "running",
-                            }
-                        })
+                        # Execute node started
+                        elif kind == "on_chain_start" and event.get("name") == "execute":
+                            yield _ev("tool_call", {
+                                "tool_call": {
+                                    "name": "code_execution",
+                                    "arguments": {},
+                                    "status": "running",
+                                }
+                            })
 
-                    # Execute node completed
-                    elif kind == "on_chain_end" and event.get("name") == "execute":
-                        output = event["data"].get("output", {})
-                        last_msg = ""
-                        if output and "messages" in output:
-                            msgs = output["messages"]
-                            # A1 uses .invoke() — no on_chat_model_stream events.
-                            # msgs[-2] = AIMessage (code with <execute>...</execute>)
-                            # msgs[-1] = HumanMessage (<observation>result</observation>)
-                            if len(msgs) >= 2 and hasattr(msgs[-2], 'content'):
-                                full_response += f"\n{msgs[-2].content}\n"
-                            last_msg = msgs[-1].content if msgs else ""
-                            full_response += f"\n{last_msg}\n"
-                            step_result = {
-                                "stdout": last_msg,
-                                "tool": step.get("tool", "code_execution"),
-                            }
-                        # Detect errors in observation
-                        stdout = (step_result or {}).get("stdout", "")
-                        _obs_open = behavior.get("code_result_format") or "<observation>"
-                        if f"{_obs_open}Error:" in stdout or f"{_obs_open}Traceback" in stdout:
-                            has_error = True
+                        # Execute node completed
+                        elif kind == "on_chain_end" and event.get("name") == "execute":
+                            output = event["data"].get("output", {})
+                            last_msg = ""
+                            if output and "messages" in output:
+                                msgs = output["messages"]
+                                # A1 uses .invoke() — no on_chat_model_stream events.
+                                # msgs[-2] = AIMessage (code with <execute>...</execute>)
+                                # msgs[-1] = HumanMessage (<observation>result</observation>)
+                                if len(msgs) >= 2 and hasattr(msgs[-2], 'content'):
+                                    full_response += f"\n{msgs[-2].content}\n"
+                                last_msg = msgs[-1].content if msgs else ""
+                                full_response += f"\n{last_msg}\n"
+                                step_result = {
+                                    "stdout": last_msg,
+                                    "tool": step.get("tool", "code_execution"),
+                                }
+                            # Detect errors in observation
+                            stdout = (step_result or {}).get("stdout", "")
+                            _obs_open = behavior.get("code_result_format") or "<observation>"
+                            if f"{_obs_open}Error:" in stdout or f"{_obs_open}Traceback" in stdout:
+                                has_error = True
 
-                        # ── Emit intermediate execution result ──
-                        exec_code = _extract_last_execute_block(full_response, behavior)
-                        if exec_code and self._import_mapping:
-                            exec_code, _ = _fix_biomni_imports(exec_code, self._import_mapping)
-                        obs_text = _extract_observation(last_msg)
-                        yield _ev("step_execute", {"step_execute": {
-                            "step": step_idx + 1,
-                            "code": exec_code,
-                            "observation": obs_text,
-                            "success": not has_error,
-                            "iteration": exec_count,
-                        }})
-                        exec_count += 1
+                            # ── Emit intermediate execution result ──
+                            exec_code = _extract_last_execute_block(full_response, behavior)
+                            if exec_code and self._import_mapping:
+                                exec_code, _ = _fix_biomni_imports(exec_code, self._import_mapping)
+                            obs_text = _extract_observation(last_msg)
+                            yield _ev("step_execute", {"step_execute": {
+                                "step": step_idx + 1,
+                                "code": exec_code,
+                                "observation": obs_text,
+                                "success": not has_error,
+                                "iteration": exec_count,
+                            }})
+                            exec_count += 1
 
-            except asyncio.CancelledError:
-                logger.info(f"Step {step_idx+1} cancelled by user stop")
-                await self._save_plan_complete(conv_id, conv_svc, stopped=True)
-                raise
-            except Exception as step_err:
-                logger.error(f"Step {step_idx+1} A1 execution failed: {step_err}")
-                # Build partial result from accumulated response
-                partial_result, partial_tool, _ = _build_step_result_from_response(
-                    full_response, step_result, behavior, step, has_error,
-                )
-                _err_data = {"error": f"A1 error: {step_err}", **partial_result}
-                yield _ev("tool_result", {"tool_result": {
-                    "success": False, "result": _err_data,
-                    "tool": partial_tool if partial_tool != "text" else "step_error",
-                    "step": step_idx + 1,
-                }})
-                plan_state["all_results"].append({
-                    "step": step_idx + 1, "tool": "step_error",
-                    "success": False, "result": _err_data,
-                })
-                history.append(AIMessage(content=f"Step {step_idx+1} failed: {step_err}"))
+                    _retry_succeeded = True
+                    break  # Normal completion — exit retry loop
+
+                except GraphRecursionError:
+                    logger.warning(f"Step {step_idx+1} hit recursion limit (attempt {_attempt+1}/{_MAX_RETRIES})")
+                    if _attempt < _MAX_RETRIES - 1:
+                        inputs["messages"].append(HumanMessage(content=(
+                            "Previous attempt hit the recursion limit. "
+                            "Solve this step more concisely — minimize iterations."
+                        )))
+                        yield _ev("step_status", {"step": step_idx + 1, "status": "retrying", "attempt": _attempt + 2})
+                        continue
+                    # All retries exhausted
+                    _err_data = {"error": "Recursion limit reached after 3 retries"}
+                    yield _ev("tool_result", {"tool_result": {
+                        "success": False, "result": _err_data,
+                        "tool": "step_error", "step": step_idx + 1,
+                    }})
+                    plan_state["all_results"].append({
+                        "step": step_idx + 1, "tool": "step_error",
+                        "success": False, "result": _err_data,
+                    })
+                    history.append(AIMessage(content=f"Step {step_idx+1} failed: recursion limit after {_MAX_RETRIES} retries"))
+                    break
+
+                except asyncio.CancelledError:
+                    logger.info(f"Step {step_idx+1} cancelled by user stop")
+                    await self._save_plan_complete(conv_id, conv_svc, stopped=True)
+                    raise
+
+                except Exception as step_err:
+                    logger.error(f"Step {step_idx+1} A1 execution failed: {step_err}")
+                    partial_result, partial_tool, _ = _build_step_result_from_response(
+                        full_response, step_result, behavior, step, has_error,
+                    )
+                    _err_data = {"error": f"A1 error: {step_err}", **partial_result}
+                    yield _ev("tool_result", {"tool_result": {
+                        "success": False, "result": _err_data,
+                        "tool": partial_tool if partial_tool != "text" else "step_error",
+                        "step": step_idx + 1,
+                    }})
+                    plan_state["all_results"].append({
+                        "step": step_idx + 1, "tool": "step_error",
+                        "success": False, "result": _err_data,
+                    })
+                    history.append(AIMessage(content=f"Step {step_idx+1} failed: {step_err}"))
+                    break
+
+            if not _retry_succeeded:
                 continue
 
             # ── Build final step result (code + execution) ──
@@ -1232,12 +1289,9 @@ class ChatHandler:
                 "success": step_success,
                 "result": final_result,
             })
-            # Fix imports in history too
+            # Fix imports in history — keep think blocks in history for DB/UI preservation
             fixed_response, _ = _fix_biomni_imports(full_response, self._import_mapping)
-            # Strip think blocks from history to save context and prevent LLM from seeing its own reasoning
-            clean_response = re.sub(r'\[THINK\][\s\S]*?\[/THINK\]', '', fixed_response).strip()
-            clean_response = re.sub(r'<think>[\s\S]*?</think>', '', clean_response, flags=re.IGNORECASE).strip()
-            history.append(AIMessage(content=clean_response))
+            history.append(AIMessage(content=fixed_response))
 
             # ── Incremental save to DB (survives backend restart) ──
             await self._save_plan_complete(conv_id, conv_svc)
@@ -1506,6 +1560,7 @@ class ChatHandler:
             prev_name = (all_steps[step_idx - 1].get("name", f"Step {step_idx}")
                          if all_steps else f"Step {step_idx}")
             parts.append(f"\n--- Previous Step Result (Step {step_idx}: {prev_name}) ---")
+            parts.append("NOTE: Critically verify this result. Do not assume it is correct — cross-check with your own analysis.")
             result_data = prev.get("result", {})
             if isinstance(result_data, dict):
                 for key in ("solution", "reasoning", "code", "stdout"):
@@ -1690,6 +1745,9 @@ class ChatHandler:
 
         llm_service = get_llm_service()
         llm = await llm_service.get_llm_instance(db=db)
+        # Cap max_tokens for analysis to avoid input + output > context_length error
+        if hasattr(llm, 'max_tokens') and (llm.max_tokens or 0) > 8192:
+            llm = llm.bind(max_tokens=8192)
         messages = [
             SystemMessage(content=ANALYZE_PLAN_SYSTEM_PROMPT),
             HumanMessage(content=prompt),
