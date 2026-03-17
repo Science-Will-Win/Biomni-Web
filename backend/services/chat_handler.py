@@ -887,7 +887,8 @@ class ChatHandler:
             )
             use_llm_ret = behavior.get("use_llm_retrieval", True)
             if use_llm_ret:
-                llm = await llm_service.get_llm_instance(db=db)
+                # Cap max_tokens for retrieval — only needs short index list output
+                llm = await llm_service.get_llm_instance(db=db, max_tokens=8192)
                 retrieval_result = await biomni_loader.retrieval_with_llm(
                     retrieval_query, llm, max_tools=15,
                     data_lake_items=data_lake_items,
