@@ -336,7 +336,7 @@ class LLMService:
             "tool_result_format": mc.get("tool_result_format"),
             "solution_format": mc.get("solution_format"),
             "tool_calls_format": mc.get("tool_calls_format"),
-            "use_llm_retrieval": mc.get("use_llm_retrieval", False),
+            "use_llm_retrieval": mc.get("use_llm_retrieval", True),
             "refusal": refusal if refusal else None,
             "system_prompt": mc.get("system_prompt"),
         }

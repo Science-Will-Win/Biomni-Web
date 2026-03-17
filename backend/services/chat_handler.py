@@ -468,93 +468,135 @@ def _extract_plan_from_text(text: str, user_message: str) -> Optional[Dict[str, 
             return stripped[:500]
         return ""
 
+    # ── Helper: collect contiguous blocks and return the LAST valid one ──
+    def _last_valid_block(
+        lines_list: list, pattern, extract_fn, min_steps: int = 4,
+    ) -> Optional[tuple]:
+        """Walk lines, group consecutive pattern matches into blocks,
+        return (first_step_idx, steps_list) of the LAST block with >= min_steps.
+        `extract_fn(match, idx)` → dict or None.
+        Non-matching lines that are blank / indented / sub-bullets are allowed
+        inside a block; other lines break the block.
+        """
+        all_blocks: list = []  # [(first_idx, [step_dicts])]
+        cur_block: list = []
+        cur_start: Optional[int] = None
+
+        for idx, line in enumerate(lines_list):
+            m = pattern.match(line) if hasattr(pattern, 'match') else pattern.search(line)
+            if m:
+                step = extract_fn(m, idx)
+                if step is not None:
+                    if cur_start is None:
+                        cur_start = idx
+                    cur_block.append(step)
+                    continue
+            # Non-match line: decide if block continues or breaks
+            stripped = line.strip()
+            if not stripped or line.startswith("   ") or line.startswith("\t"):
+                continue  # blank / indented description → keep block open
+            if stripped.startswith("- ") or stripped.startswith("* "):
+                continue  # sub-bullet → keep block open
+            # Check if it's a Goal: line (don't break on it)
+            if re.match(r'^(?:Goal|목표)\s*[:：]', stripped, re.IGNORECASE):
+                continue
+            # Real break
+            if cur_block:
+                all_blocks.append((cur_start, cur_block))
+                cur_block = []
+                cur_start = None
+
+        if cur_block:
+            all_blocks.append((cur_start, cur_block))
+
+        # Pick the last block with enough steps
+        for block_start, block_steps in reversed(all_blocks):
+            if len(block_steps) >= min_steps:
+                return (block_start, block_steps)
+        return None
+
     # Strategy 2: Numbered list items
     numbered_pat = re.compile(
         r"^\s*(\d+)[.)]\s*(?:\[[ x✓✗]?\]\s*)?"
         r"(.+)",
         re.IGNORECASE,
     )
-    first_step_idx = None
-    for idx, line in enumerate(lines):
-        m = numbered_pat.match(line)
-        if m:
-            step_text = m.group(2).strip().rstrip(".")
-            if step_text and len(step_text) > 5 and not step_text.lower().startswith(("here", "now", "let", "wait", "the ")):
-                if first_step_idx is None:
-                    first_step_idx = idx
-                name, desc = _split_name_desc(step_text)
-                if not desc:
-                    desc = _capture_next_desc(lines, idx, numbered_pat)
-                steps.append({"name": name, "description": desc})
 
-    if len(steps) >= 4 and _has_goal_line(lines, len(lines)):
+    def _numbered_extract(m, idx):
+        step_text = m.group(2).strip().rstrip(".")
+        if step_text and len(step_text) > 5 and not step_text.lower().startswith(("here", "now", "let", "wait", "the ")):
+            name, desc = _split_name_desc(step_text)
+            if not desc:
+                desc = _capture_next_desc(lines, idx, numbered_pat)
+            return {"name": name, "description": desc}
+        return None
+
+    result = _last_valid_block(lines, numbered_pat, _numbered_extract)
+    if result and _has_goal_line(lines, len(lines)):
+        first_step_idx, steps = result
         goal = _find_goal(lines, len(lines))
         logger.info(f"Plan extracted from numbered list: {len(steps)} steps")
         return {"goal": goal, "steps": steps[:10]}
 
     # Strategy 2b: Checkbox-only items (no number prefix)
-    steps = []
-    first_step_idx = None
     checkbox_pat = re.compile(
         r"^\s*\[[ x✓✗]?\]\s+(.+)",
         re.IGNORECASE,
     )
-    for idx, line in enumerate(lines):
-        m = checkbox_pat.match(line)
-        if m:
-            step_text = m.group(1).strip().rstrip(".")
-            if step_text and len(step_text) > 5:
-                if first_step_idx is None:
-                    first_step_idx = idx
-                name, desc = _split_name_desc(step_text)
-                if not desc:
-                    desc = _capture_next_desc(lines, idx, checkbox_pat)
-                steps.append({"name": name, "description": desc})
 
-    if len(steps) >= 4 and _has_goal_line(lines, len(lines)):
+    def _checkbox_extract(m, idx):
+        step_text = m.group(1).strip().rstrip(".")
+        if step_text and len(step_text) > 5:
+            name, desc = _split_name_desc(step_text)
+            if not desc:
+                desc = _capture_next_desc(lines, idx, checkbox_pat)
+            return {"name": name, "description": desc}
+        return None
+
+    result = _last_valid_block(lines, checkbox_pat, _checkbox_extract)
+    if result and _has_goal_line(lines, len(lines)):
+        first_step_idx, steps = result
         goal = _find_goal(lines, len(lines))
         logger.info(f"Plan extracted from checkbox items: {len(steps)} steps")
         return {"goal": goal, "steps": steps[:10]}
 
     # Strategy 3: Bullet points
-    steps = []
-    first_step_idx = None
     bullet_pat = re.compile(r"^\s*[-*•]\s+(.+)", re.IGNORECASE)
-    for idx, line in enumerate(lines):
-        m = bullet_pat.match(line)
-        if m:
-            step_text = m.group(1).strip().rstrip(".")
-            if step_text and len(step_text) > 5 and ":" not in step_text[:3]:
-                if first_step_idx is None:
-                    first_step_idx = idx
-                name, desc = _split_name_desc(step_text)
-                if not desc:
-                    desc = _capture_next_desc(lines, idx, bullet_pat)
-                steps.append({"name": name, "description": desc})
 
-    if len(steps) >= 4 and _has_goal_line(lines, first_step_idx or 0):
-        goal = _find_goal(lines, first_step_idx or 0)
-        logger.info(f"Plan extracted from bullet points: {len(steps)} steps")
-        return {"goal": goal, "steps": steps[:10]}
+    def _bullet_extract(m, idx):
+        step_text = m.group(1).strip().rstrip(".")
+        if step_text and len(step_text) > 5 and ":" not in step_text[:3]:
+            name, desc = _split_name_desc(step_text)
+            if not desc:
+                desc = _capture_next_desc(lines, idx, bullet_pat)
+            return {"name": name, "description": desc}
+        return None
+
+    result = _last_valid_block(lines, bullet_pat, _bullet_extract)
+    if result:
+        first_step_idx, steps = result
+        if _has_goal_line(lines, first_step_idx or 0):
+            goal = _find_goal(lines, first_step_idx or 0)
+            logger.info(f"Plan extracted from bullet points: {len(steps)} steps")
+            return {"goal": goal, "steps": steps[:10]}
 
     # Strategy 4: Bold items **Name**: description
-    steps = []
-    first_step_idx = None
     bold_pat = re.compile(r"\*\*([^*]+)\*\*\s*[:：]?\s*(.*)")
-    for idx, line in enumerate(lines):
-        m = bold_pat.search(line)
-        if m:
-            name = m.group(1).strip()
-            desc = m.group(2).strip() if m.group(2) else ""
-            if name and len(name) > 3:
-                if first_step_idx is None:
-                    first_step_idx = idx
-                steps.append({"name": name[:100], "description": desc})
 
-    if len(steps) >= 4 and _has_goal_line(lines, first_step_idx or 0):
-        goal = _find_goal(lines, first_step_idx or 0)
-        logger.info(f"Plan extracted from bold items: {len(steps)} steps")
-        return {"goal": goal, "steps": steps[:10]}
+    def _bold_extract(m, idx):
+        name = m.group(1).strip()
+        desc = m.group(2).strip() if m.group(2) else ""
+        if name and len(name) > 3:
+            return {"name": name[:100], "description": desc}
+        return None
+
+    result = _last_valid_block(lines, bold_pat, _bold_extract)
+    if result:
+        first_step_idx, steps = result
+        if _has_goal_line(lines, first_step_idx or 0):
+            goal = _find_goal(lines, first_step_idx or 0)
+            logger.info(f"Plan extracted from bold items: {len(steps)} steps")
+            return {"goal": goal, "steps": steps[:10]}
 
     return None
 
@@ -886,13 +928,16 @@ class ChatHandler:
                 s.get("description", s.get("name", "")) for s in steps
             )
             use_llm_ret = behavior.get("use_llm_retrieval", True)
+            logger.info(f"Tool retrieval mode: use_llm={use_llm_ret}")
             if use_llm_ret:
                 # Cap max_tokens for retrieval — only needs short index list output
                 llm = await llm_service.get_llm_instance(db=db, max_tokens=8192)
+                logger.info("Calling retrieval_with_llm ...")
                 retrieval_result = await biomni_loader.retrieval_with_llm(
                     retrieval_query, llm, max_tools=15,
                     data_lake_items=data_lake_items,
                 )
+                logger.info(f"retrieval_with_llm returned: {len(retrieval_result.get('tools', []))} tools")
             else:
                 kw_tools = biomni_loader.keyword_search(retrieval_query, max_results=15)
                 retrieval_result = {"tools": kw_tools, "data_lake": [], "libraries": []}

@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     OTEL_SERVICE_NAME: str = "aigen-backend"
 
     # --- Biomni ---
-    BIOMNI_DATA_PATH: str = "/app/data"
+    BIOMNI_DATA_PATH: str = "/app/data/biomni_data/data_lake"
 
     # --- File Paths ---
     UPLOADS_DIR: str = "/app/uploads"
