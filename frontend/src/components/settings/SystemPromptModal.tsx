@@ -8,12 +8,13 @@ import {
 } from '@/api/settings';
 import type { ComposedPromptsResponse, PromptSection } from '@/api/settings';
 
-type TabKey = 'agent' | 'full' | 'plan';
+type TabKey = 'agent' | 'full' | 'plan' | 'tool_retrieval';
 
 const TABS: { key: TabKey; label: string; hint: string }[] = [
   { key: 'agent', label: 'Agent System Prompt', hint: 'Used for direct chat without a plan.' },
   { key: 'full', label: 'Execution Prompt', hint: 'Used during plan step execution (Role + Plan + Code/CodeGen + Protocol + Resources).' },
   { key: 'plan', label: 'Plan Creation Prompt', hint: 'Used when generating a new research plan.' },
+  { key: 'tool_retrieval', label: 'Tool Retrieval', hint: 'Used to select relevant tools before step execution. Variables in {brackets} are filled at runtime.' },
 ];
 
 function SectionsView({ sections }: { sections: PromptSection[] }) {
@@ -44,6 +45,9 @@ export function SystemPromptModal() {
   const [composed, setComposed] = useState<ComposedPromptsResponse | null>(null);
   const [modelName, setModelName] = useState('');
   const [modeEdits, setModeEdits] = useState<Record<string, string>>({});
+  // Separate top/bottom edits for tool_retrieval 3-part layout
+  const [retrievalTop, setRetrievalTop] = useState('');
+  const [retrievalBottom, setRetrievalBottom] = useState('');
   const [loading, setLoading] = useState(false);
 
   // Load composed prompts (generated with current model's token_format)
@@ -56,8 +60,18 @@ export function SystemPromptModal() {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         setModelName((data as any).model || '');
         const edits: Record<string, string> = {};
-        for (const key of ['full', 'agent', 'plan'] as const) {
-          edits[key] = data[key].custom || data[key].composed;
+        for (const key of ['full', 'agent', 'plan', 'tool_retrieval'] as const) {
+          const d = data[key];
+          if (!d) continue;
+          if (key === 'tool_retrieval') {
+            // 3-part: load top/bottom separately
+            setRetrievalTop(d.editable_top || '');
+            setRetrievalBottom(d.editable_bottom || '');
+            // modeEdits stores the combined form for save
+            edits[key] = (d.editable_top || '') + '\n===AUTO_TOOLS===\n' + (d.editable_bottom || '');
+          } else {
+            edits[key] = d.custom || d.composed;
+          }
         }
         setModeEdits(edits);
       })
@@ -75,9 +89,18 @@ export function SystemPromptModal() {
   }, [activeTab, modeEdits]);
 
   const handleReset = useCallback(() => {
-    if (composed) {
-      const defaultPrompt = composed[activeTab].composed;
-      setModeEdits(prev => ({ ...prev, [activeTab]: defaultPrompt }));
+    if (!composed) return;
+    const tabData = composed[activeTab];
+    if (!tabData) return;
+    if (activeTab === 'tool_retrieval') {
+      // Reset to defaults (not custom)
+      const defaultTop = tabData.default_top || tabData.editable_top || '';
+      const defaultBottom = tabData.default_bottom || tabData.editable_bottom || '';
+      setRetrievalTop(defaultTop);
+      setRetrievalBottom(defaultBottom);
+      setModeEdits(prev => ({ ...prev, [activeTab]: '' }));
+    } else {
+      setModeEdits(prev => ({ ...prev, [activeTab]: tabData.composed }));
     }
   }, [activeTab, composed]);
 
@@ -86,7 +109,7 @@ export function SystemPromptModal() {
   };
 
   const currentTab = TABS.find(tb => tb.key === activeTab)!;
-  const modeData = composed ? composed[activeTab] : null;
+  const modeData = composed ? composed[activeTab] ?? null : null;
 
   return (
     <div className="modal active" onClick={close}>
@@ -121,12 +144,40 @@ export function SystemPromptModal() {
                 <summary className="sp-sections-summary">Default Sections</summary>
                 <SectionsView sections={modeData.sections} />
               </details>
-              <textarea
-                className="modal-textarea"
-                value={modeEdits[activeTab] || ''}
-                onChange={(e) => handleModeEdit(e.target.value)}
-                rows={14}
-              />
+              {activeTab === 'tool_retrieval' && modeData.readonly_middle ? (
+                <>
+                  <textarea
+                    className="modal-textarea"
+                    value={retrievalTop}
+                    onChange={(e) => {
+                      setRetrievalTop(e.target.value);
+                      setModeEdits(prev => ({ ...prev, tool_retrieval: e.target.value + '\n===AUTO_TOOLS===\n' + retrievalBottom }));
+                    }}
+                    rows={6}
+                  />
+                  <p className="system-prompt-hint" style={{ marginTop: 8 }}>
+                    The following section is auto-generated from the tool database and cannot be edited.
+                  </p>
+                  <pre className="sp-readonly-block">{modeData.readonly_middle}</pre>
+                  <textarea
+                    className="modal-textarea"
+                    value={retrievalBottom}
+                    onChange={(e) => {
+                      setRetrievalBottom(e.target.value);
+                      setModeEdits(prev => ({ ...prev, tool_retrieval: retrievalTop + '\n===AUTO_TOOLS===\n' + e.target.value }));
+                    }}
+                    rows={8}
+                    style={{ marginTop: 8 }}
+                  />
+                </>
+              ) : (
+                <textarea
+                  className="modal-textarea"
+                  value={modeEdits[activeTab] || ''}
+                  onChange={(e) => handleModeEdit(e.target.value)}
+                  rows={14}
+                />
+              )}
             </>
           ) : (
             <div className="sp-loading">No data available</div>

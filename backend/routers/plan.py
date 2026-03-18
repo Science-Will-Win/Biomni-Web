@@ -1,17 +1,16 @@
-"""Plan management endpoints — 3 endpoints."""
+"""Plan management endpoints."""
 
-import json
 import logging
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException
 from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_db
 from models.schemas import (
     AnalyzePlanRequest,
-    ReplanRequest,
+    PlanRequest,
+    PlanResponse,
     StatusResponse,
     UpdatePlanAnalysisRequest,
 )
@@ -51,30 +50,15 @@ Output format (markdown):
 """
 
 
-@router.post("/replan")
-async def replan(request: ReplanRequest, db: AsyncSession = Depends(get_db)):
-    """Replan — re-execute steps with modified plan (SSE streaming)."""
-    handler = ChatHandler.get_instance()
-    event_stream = handler.handle_replan(request, db)
-
-    async def sse_generator():
-        try:
-            async for event in event_stream:
-                payload = {"type": event.type, **event.data}
-                yield f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
-        except Exception as e:
-            logger.exception("Replan SSE error")
-            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-
-    return StreamingResponse(
-        sse_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+@router.post("/plan/generate", response_model=PlanResponse)
+async def generate_plan(request: PlanRequest, db: AsyncSession = Depends(get_db)):
+    """A1 에이전트의 go_plan_only()를 이용해 실행 계획만 먼저 생성하여 프론트엔드에 전달합니다."""
+    try:
+        handler = ChatHandler.get_instance()
+        plan_text = await handler.generate_plan(prompt=request.prompt, conv_id=request.conv_id, db=db)
+        return PlanResponse(plan=plan_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate plan: {str(e)}")
 
 
 @router.post("/update_plan_analysis", response_model=StatusResponse)
@@ -97,13 +81,9 @@ async def update_plan_analysis(
 async def analyze_plan(
     request: AnalyzePlanRequest, db: AsyncSession = Depends(get_db)
 ):
-    """Generate LLM analysis for a completed plan.
-
-    Ported from original tools/analysis/analysis_tools.py AnalyzePlanTool.
-    """
+    """Generate LLM analysis for a completed plan."""
     llm_service = LLMService.get_instance()
 
-    # Build step info context (same format as original)
     steps_info = []
     for i, step in enumerate(request.steps):
         status = step.get("status", "pending")

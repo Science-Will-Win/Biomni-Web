@@ -11,6 +11,7 @@ export function useSmartScroll(isStreaming: boolean) {
   const userScrolledUp = useRef(false);
   const autoScrolling = useRef(false);
   const [nearBottom, setNearBottom] = useState(true);
+  const [isScrollable, setIsScrollable] = useState(false);
 
   const scrollToBottom = useCallback(() => {
     const el = containerRef.current;
@@ -22,15 +23,27 @@ export function useSmartScroll(isStreaming: boolean) {
     }
   }, []);
 
+  // Recompute scroll state helper
+  const recomputeScroll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const scrollable = el.scrollHeight > el.clientHeight + 10;
+    const isNear = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+    setIsScrollable(scrollable);
+    setNearBottom(isNear);
+  }, []);
+
   // Track scroll position
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
 
     const handleScroll = () => {
-      const threshold = 150; // Original uses 150px
+      const threshold = 150;
       const isNear = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+      const scrollable = el.scrollHeight > el.clientHeight + 10;
       setNearBottom(isNear);
+      setIsScrollable(scrollable);
       // auto-scroll이 발생시킨 scroll이면 flag 리셋하지 않음
       if (autoScrolling.current) {
         autoScrolling.current = false;
@@ -56,6 +69,18 @@ export function useSmartScroll(isStreaming: boolean) {
     };
   }, [isStreaming]);
 
+  // Recompute scroll state when content or container size changes
+  // (fixes stale isScrollable when switching conversations)
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(recomputeScroll);
+    ro.observe(el);
+    const mo = new MutationObserver(recomputeScroll);
+    mo.observe(el, { childList: true, subtree: true });
+    return () => { ro.disconnect(); mo.disconnect(); };
+  }, [recomputeScroll]);
+
   // Auto-scroll during streaming
   useEffect(() => {
     if (!isStreaming) return;
@@ -80,6 +105,6 @@ export function useSmartScroll(isStreaming: boolean) {
   return {
     containerRef,
     scrollToBottom,
-    showScrollButton: !nearBottom,
+    showScrollButton: isScrollable && !nearBottom,
   };
 }

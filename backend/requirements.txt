@@ -32,6 +32,7 @@ opentelemetry-instrumentation-fastapi
 # ─── Utilities ───
 pyyaml
 requests
+docker
 tqdm
 mcp
 nest-asyncio
@@ -124,3 +125,6 @@ fair-esm
 nnunet
 nibabel
 nilearn
+
+asyncpg
+psycopg2-binary

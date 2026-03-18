@@ -1,9 +1,8 @@
-import { useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { useState, useRef, useEffect } from 'react';
 import type { ChatMessage } from '@/types';
 import { useChatContext } from '@/context/ChatContext';
 import { useTranslation } from '@/i18n';
+import { MarkdownContent } from '@/utils/MarkdownContent';
 import { StreamingDots } from './StreamingDots';
 import { SpecialTokenBlock } from './SpecialTokenBlock';
 import { MessageActions } from './MessageActions';
@@ -21,8 +20,28 @@ export function MessageBubble({ message, isLast, isStreaming, messageIndex, onSa
   const isUser = message.role === 'user';
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(message.content);
+  const [editSize, setEditSize] = useState<{ width: number; height: number } | null>(null);
   const { state: chatState } = useChatContext();
   const { t } = useTranslation();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  // Auto-resize textarea height on content change
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (el) {
+      el.style.height = 'auto';
+      el.style.height = el.scrollHeight + 'px';
+    }
+  }, [editValue]);
+
+  const startEdit = () => {
+    if (contentRef.current) {
+      const rect = contentRef.current.getBoundingClientRect();
+      setEditSize({ width: rect.width, height: rect.height });
+    }
+    setIsEditing(true);
+  };
 
   // Parse content: extract [THINK] blocks + strip other special tokens
   const { displayContent, thinkBlocks } = parseContent(message.content);
@@ -47,11 +66,22 @@ export function MessageBubble({ message, isLast, isStreaming, messageIndex, onSa
         {/* Main content */}
         {isUser ? (
           isEditing ? (
-            <div className="message-edit-container">
+            <div className="message-edit-container" style={editSize ? { minWidth: editSize.width } : undefined}>
               <textarea
+                ref={textareaRef}
                 className="edit-textarea"
                 value={editValue}
                 onChange={(e) => setEditValue(e.target.value)}
+                style={editSize ? { minHeight: editSize.height } : undefined}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    setIsEditing(false);
+                    if (editValue.trim()) {
+                      onSaveEdit?.(messageIndex, editValue.trim());
+                    }
+                  }
+                }}
                 autoFocus
               />
               <div className="edit-actions">
@@ -59,7 +89,7 @@ export function MessageBubble({ message, isLast, isStreaming, messageIndex, onSa
                   className="edit-btn save"
                   onClick={() => {
                     setIsEditing(false);
-                    if (editValue.trim() && editValue !== message.content) {
+                    if (editValue.trim()) {
                       onSaveEdit?.(messageIndex, editValue.trim());
                     }
                   }}
@@ -78,23 +108,23 @@ export function MessageBubble({ message, isLast, isStreaming, messageIndex, onSa
               </div>
             </div>
           ) : (
-            <div className="message-text">{displayContent}</div>
+            <div className="message-text" ref={contentRef}>{displayContent}</div>
           )
         ) : showPlanCreatingIndicator ? (
-          /* Plan mode Phase A: hide raw tokens, show "플랜 생성 중..." with blue dots */
+          /* Plan mode Phase A: hide raw tokens, show creating/retrying indicator */
           <div className="plan-creating-indicator">
             <StreamingDots />
-            <span>{t('status.creating_plan')}</span>
+            <span>{chatState.planRetrying ? t('status.plan_retry') : t('status.creating_plan')}</span>
           </div>
         ) : hasPlanCall ? (
-          /* Plan mode: PlanStepsBox handles display — hide raw plan text */
-          null
+          /* Plan mode: show raw plan response as collapsed Planning block */
+          displayContent ? (
+            <SpecialTokenBlock label="Planning" content={displayContent} variant="think" isStreaming={false} />
+          ) : null
         ) : (
           <div className="message-text markdown-content">
             {displayContent ? (
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {displayContent}
-              </ReactMarkdown>
+              <MarkdownContent text={displayContent} />
             ) : isStreaming && isLast ? (
               <StreamingDots />
             ) : null}
@@ -149,7 +179,7 @@ export function MessageBubble({ message, isLast, isStreaming, messageIndex, onSa
           messageIndex={messageIndex}
           role={message.role}
           content={message.content}
-          onEdit={isUser ? () => setIsEditing(true) : undefined}
+          onEdit={isUser ? startEdit : undefined}
         />
       )}
     </div>
@@ -164,34 +194,40 @@ function parseContent(content: string): { displayContent: string; thinkBlocks: s
 
   const thinkBlocks: string[] = [];
 
-  // Extract [THINK]...[/THINK]
-  content.replace(/\[THINK\]([\s\S]*?)\[\/THINK\]/g, (_, block: string) => {
-    thinkBlocks.push(block.trim());
-    return '';
-  });
+  // Extract think blocks — supports mixed formats ([THINK]...</think>, <think>...[/THINK], etc.)
+  const thinkPattern = /(?:\[THINK\]|<think>)([\s\S]*?)(?:\[\/THINK\]|<\/think>)/gi;
+  for (const match of content.matchAll(thinkPattern)) {
+    thinkBlocks.push(match[1].trim());
+  }
 
-  // Extract <think>...</think>
-  content.replace(/<think>([\s\S]*?)<\/think>/g, (_, block: string) => {
-    thinkBlocks.push(block.trim());
-    return '';
-  });
-
-  // Strip all special tokens for display
+  // Strip all think blocks for display (cross-format)
   let result = content;
-  result = result.replace(/\[THINK\][\s\S]*?\[\/THINK\]/g, '');
-  result = result.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  result = result.replace(/(?:\[THINK\]|<think>)[\s\S]*?(?:\[\/THINK\]|<\/think>)/gi, '');
 
   // Handle incomplete think blocks (streaming — closing tag not yet arrived)
-  const partialBracket = result.match(/\[THINK\]([\s\S]*)$/);
-  if (partialBracket) {
-    thinkBlocks.push(partialBracket[1].trim());
-    result = result.replace(/\[THINK\][\s\S]*$/, '');
+  const partialThink = result.match(/(?:\[THINK\]|<think>)([\s\S]*)$/i);
+  if (partialThink) {
+    thinkBlocks.push(partialThink[1].trim());
+    result = result.replace(/(?:\[THINK\]|<think>)[\s\S]*$/i, '');
   }
-  const partialHtml = result.match(/<think>([\s\S]*)$/i);
-  if (partialHtml) {
-    thinkBlocks.push(partialHtml[1].trim());
-    result = result.replace(/<think>[\s\S]*$/i, '');
-  }
+
+  // Extract execute blocks (cross-format) → code blocks
+  // Negative lookahead prevents matching across nested/unclosed execute tags
+  result = result.replace(/(?:<execute>|\[EXECUTE\])((?:(?!(?:<execute>|\[EXECUTE\]))[\s\S])*?)(?:<\/execute>|\[\/EXECUTE\])/gi, (_m: string, code: string) =>
+    '\n```python\n' + code.trim() + '\n```\n');
+  // Incomplete streaming execute blocks — match only the LAST unclosed block
+  result = result.replace(/(?:<execute>|\[EXECUTE\])((?:(?!(?:<execute>|\[EXECUTE\]))[\s\S])*)$/i, (_m: string, code: string) =>
+    '\n' + code.trim() + '\n');
+
+  // Strip empty observation blocks first (cross-format)
+  result = result.replace(/(?:<observation>|\[OBSERVATION\])\s*(?:<\/observation>|\[\/OBSERVATION\])/gi, '');
+  // Observation blocks with content → blockquote (cross-format)
+  result = result.replace(/(?:<observation>|\[OBSERVATION\])([\s\S]*?)(?:<\/observation>|\[\/OBSERVATION\])/gi, (_m: string, obs: string) =>
+    '\n> **Output:** ' + obs.trim() + '\n');
+
+  // Strip solution blocks (cross-format, displayed in plan box not chat)
+  result = result.replace(/(?:<solution>|\[SOLUTION\])[\s\S]*?(?:<\/solution>|\[\/SOLUTION\])/gi, '');
+  result = result.replace(/(?:<solution>|\[SOLUTION\])[\s\S]*$/i, '');
 
   result = result.replace(/\[TOOL_CALLS\][\s\S]*?(?:\[ARGS\][\s\S]*?)?(?=\[TOOL_RESULTS\]|$)/g, '');
   result = result.replace(/\[TOOL_RESULTS\][\s\S]*?\[\/TOOL_RESULTS\]/g, '');
@@ -202,6 +238,10 @@ function parseContent(content: string): { displayContent: string; thinkBlocks: s
   result = result.replace(/<start>\w+\{[\s\S]*$/g, '');
   // Strip remaining <start> tags
   result = result.replace(/<start>/g, '');
+  // Strip orphaned tags (unclosed ones that weren't the last block)
+  result = result.replace(/\[EXECUTE\]/g, '');
+  result = result.replace(/<\/?execute>/gi, '');
+  result = result.replace(/<\/?think>/gi, '');
 
   return { displayContent: result.trim(), thinkBlocks };
 }

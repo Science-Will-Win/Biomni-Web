@@ -48,13 +48,19 @@ export type AppAction =
   | { type: 'SET_ACTIVE_DETAIL_TAB'; payload: AppState['activeDetailTab'] }
   | { type: 'UPDATE_STEP_STATUS'; payload: { stepIndex: number; status: PlanStep['status'] } }
   | { type: 'ADD_STEP_RESULT'; payload: PlanStepResult }
-  | { type: 'SET_STEP_CODE'; payload: { stepIndex: number; code: string; language?: string; execution?: Record<string, unknown>; fixAttempts?: number } }
+  | { type: 'SET_STEP_CODE'; payload: { stepIndex: number; code: string; language?: string; execution?: Record<string, unknown>; fixAttempts?: number; segments?: import('../types').CodeSegment[] } }
   | { type: 'SET_ANALYSIS'; payload: string }
   | { type: 'SET_CURRENT_STEP'; payload: number }
   | { type: 'UPDATE_STEP_TOOL'; payload: { stepIndex: number; toolName: string } }
   | { type: 'RESET_STEP_RESULTS' }
   | { type: 'MARK_RUNNING_STEPS_ERROR' }
+  | { type: 'MARK_RUNNING_STEPS_STOPPED' }
   | { type: 'COMPLETE_PREVIOUS_RUNNING_STEPS'; payload: number }
+  | { type: 'UPDATE_STEP_NAME'; payload: { stepIndex: number; name: string } }
+  | { type: 'SET_RETRIEVED_TOOLS'; payload: string[] }
+  | { type: 'SET_RETRIEVAL_RESULT'; payload: import('../types').CategorizedRetrieval }
+  | { type: 'SET_TOOL_RETRIEVAL_STATUS'; payload: 'idle' | 'running' | 'done' }
+  | { type: 'ADD_STEP_EXECUTION'; payload: { stepIndex: number; code: string; observation: string; success: boolean; iteration: number } }
   | { type: 'OPEN_MODAL'; payload: ModalType }
   | { type: 'CLOSE_MODAL' }
   | { type: 'BUMP_CONVERSATIONS' };
@@ -125,9 +131,9 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'SET_STEP_CODE': {
       if (!state.detailPanelData) return state;
-      const { stepIndex, code, language, execution, fixAttempts } = action.payload;
+      const { stepIndex, code, language, execution, fixAttempts, segments } = action.payload;
       const value: string | CodeData = language
-        ? { code, language, execution, fixAttempts: fixAttempts || 0, stepIndex }
+        ? { code, language, execution, fixAttempts: fixAttempts || 0, stepIndex, ...(segments ? { segments } : {}) }
         : code;
       return {
         ...state,
@@ -204,6 +210,20 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case 'MARK_RUNNING_STEPS_STOPPED': {
+      if (!state.detailPanelData) return state;
+      return {
+        ...state,
+        detailPanelData: {
+          ...state.detailPanelData,
+          toolRetrievalStatus: 'idle',
+          steps: state.detailPanelData.steps.map(s =>
+            s.status === 'running' ? { ...s, status: 'stopped' as const } : s
+          ),
+        },
+      };
+    }
+
     case 'COMPLETE_PREVIOUS_RUNNING_STEPS': {
       if (!state.detailPanelData) return state;
       const cutoff = action.payload; // 0-indexed: all steps before this index
@@ -215,6 +235,59 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         detailPanelData: { ...state.detailPanelData, steps },
+      };
+    }
+
+    case 'UPDATE_STEP_NAME': {
+      if (!state.detailPanelData) return state;
+      const steps = [...state.detailPanelData.steps];
+      if (steps[action.payload.stepIndex]) {
+        steps[action.payload.stepIndex] = { ...steps[action.payload.stepIndex], name: action.payload.name };
+      }
+      return { ...state, detailPanelData: { ...state.detailPanelData, steps } };
+    }
+
+    case 'SET_RETRIEVED_TOOLS': {
+      if (!state.detailPanelData) return state;
+      return {
+        ...state,
+        detailPanelData: { ...state.detailPanelData, retrievedTools: action.payload },
+      };
+    }
+
+    case 'SET_RETRIEVAL_RESULT': {
+      if (!state.detailPanelData) return state;
+      return {
+        ...state,
+        detailPanelData: {
+          ...state.detailPanelData,
+          retrievalResult: action.payload,
+          retrievedTools: action.payload.tools,
+        },
+      };
+    }
+
+    case 'SET_TOOL_RETRIEVAL_STATUS': {
+      const base = state.detailPanelData ?? {
+        goal: '', steps: [], results: [], codes: {}, analysis: '', currentStep: 0,
+      };
+      return {
+        ...state,
+        detailPanelData: { ...base, toolRetrievalStatus: action.payload },
+      };
+    }
+
+    case 'ADD_STEP_EXECUTION': {
+      if (!state.detailPanelData) return state;
+      const { stepIndex, code, observation, success, iteration } = action.payload;
+      const prev = state.detailPanelData.stepExecutions || {};
+      const stepExecs = [...(prev[stepIndex] || []), { code, observation, success, iteration }];
+      return {
+        ...state,
+        detailPanelData: {
+          ...state.detailPanelData,
+          stepExecutions: { ...prev, [stepIndex]: stepExecs },
+        },
       };
     }
 

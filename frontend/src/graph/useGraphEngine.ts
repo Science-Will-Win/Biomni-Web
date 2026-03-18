@@ -18,6 +18,7 @@ type GraphAction =
   | { type: 'SET_NODE_STATUS'; payload: { id: string; status: NodeStatus } }
   | { type: 'SET_NODE_TOOL'; payload: { id: string; tool: string } }
   | { type: 'SET_NODE_TITLE'; payload: { id: string; title: string } }
+  | { type: 'SET_NODE_DESCRIPTION'; payload: { id: string; description: string } }
   | { type: 'SET_PORT_VALUE'; payload: { nodeId: string; portName: string; value: unknown } }
   | { type: 'ADD_CONNECTION'; payload: ConnectionData }
   | { type: 'REMOVE_CONNECTION'; payload: string }
@@ -108,6 +109,14 @@ function graphReducer(state: GraphState, action: GraphAction): GraphState {
       return { ...state, nodes };
     }
 
+    case 'SET_NODE_DESCRIPTION': {
+      const node = state.nodes.get(action.payload.id);
+      if (!node || node.description === action.payload.description) return state;
+      const nodes = new Map(state.nodes);
+      nodes.set(action.payload.id, { ...node, description: action.payload.description });
+      return { ...state, nodes };
+    }
+
     case 'SET_PORT_VALUE': {
       const nodes = new Map(state.nodes);
       const node = nodes.get(action.payload.nodeId);
@@ -128,7 +137,29 @@ function graphReducer(state: GraphState, action: GraphAction): GraphState {
           return state;
         }
       }
+      // Rule 1: ref connection requires target node allowRef
+      if (conn.type === 'ref') {
+        const toNode = state.nodes.get(conn.to);
+        if (toNode) {
+          const toDef = getNodeDef(toNode.type);
+          if (!toDef?.allowRef) return state;
+        }
+        // Rule 3: ref maxAttachments limit (5)
+        let refCount = 0;
+        for (const existing of state.connections.values()) {
+          if (existing.to === conn.to && existing.toPort === conn.toPort && existing.type === 'ref') {
+            refCount++;
+          }
+        }
+        if (refCount >= 5) return state;
+        // Rule 4: forward ref 차단 — from(과거)의 depth < to(미래)의 depth
+        const fromNode = state.nodes.get(conn.from);
+        if (fromNode?.stepNum && toNode?.stepNum) {
+          if (parseFloat(fromNode.stepNum) >= parseFloat(toNode.stepNum)) return state;
+        }
+      }
       // Type compatibility check for flow connections
+      const connections = new Map(state.connections);
       if (conn.type === 'flow') {
         const fromNode = state.nodes.get(conn.from);
         const toNode = state.nodes.get(conn.to);
@@ -141,8 +172,14 @@ function graphReducer(state: GraphState, action: GraphAction): GraphState {
             return state;
           }
         }
+        // Rule 2: single flow per input port (auto-replace existing)
+        for (const [existingId, existing] of connections) {
+          if (existing.to === conn.to && existing.toPort === conn.toPort && existing.type === 'flow') {
+            connections.delete(existingId);
+            break;
+          }
+        }
       }
-      const connections = new Map(state.connections);
       connections.set(conn.id, conn);
       return { ...state, connections };
     }
@@ -232,8 +269,13 @@ function graphReducer(state: GraphState, action: GraphAction): GraphState {
       for (const id of sorted) {
         const n = nodes.get(id);
         if (n) {
-          nodes.set(id, { ...n, x: 0, y: currentY });
-          currentY += (n.height || 80) + gap;
+          if (n.userMoved) {
+            // 수동 이동 노드는 위치 유지, currentY만 갱신
+            currentY = Math.max(currentY, n.y + (n.height || 80) + gap);
+          } else {
+            nodes.set(id, { ...n, x: 0, y: currentY });
+            currentY += (n.height || 80) + gap;
+          }
         }
       }
       return { ...state, nodes };
@@ -288,6 +330,10 @@ export function useGraphEngine() {
 
   const setNodeTitle = useCallback((id: string, title: string) => {
     dispatch({ type: 'SET_NODE_TITLE', payload: { id, title } });
+  }, []);
+
+  const setNodeDescription = useCallback((id: string, description: string) => {
+    dispatch({ type: 'SET_NODE_DESCRIPTION', payload: { id, description } });
   }, []);
 
   const setPortValue = useCallback((nodeId: string, portName: string, value: unknown) => {
@@ -379,6 +425,7 @@ export function useGraphEngine() {
     setNodeStatus,
     setNodeTool,
     setNodeTitle,
+    setNodeDescription,
     setPortValue,
     addConnection,
     removeConnection,
@@ -396,7 +443,7 @@ export function useGraphEngine() {
     redo,
   }), [
     state, addNode, updateNode, removeNode, removeNodes,
-    setNodeStatus, setNodeTool, setNodeTitle, setPortValue,
+    setNodeStatus, setNodeTool, setNodeTitle, setNodeDescription, setPortValue,
     addConnection, removeConnection, setViewport, selectNode,
     toggleSelectNode, setSelectedNodes, selectConnection,
     relayoutVertical, clear, getSerializedState, setState,

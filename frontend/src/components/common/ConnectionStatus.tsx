@@ -1,6 +1,6 @@
 // ============================================
 // Connection Status Indicator
-// Shows SGLang/DB connection health in bottom-right
+// Shows vLLM/DB connection health in bottom-right
 // ============================================
 
 import { useState, useEffect, useRef } from 'react';
@@ -14,26 +14,33 @@ export function ConnectionStatus() {
   const [showTooltip, setShowTooltip] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval>>();
 
-  useEffect(() => {
-    const check = async () => {
-      try {
-        const h = await fetchHealth();
-        setHealth(h);
-      } catch {
-        setHealth({ status: 'error', sglang: false, db: false });
-      }
-    };
+  const check = async () => {
+    try {
+      const h = await fetchHealth();
+      setHealth(h);
+    } catch {
+      setHealth({ status: 'error', vllm: false, db: false });
+    }
+  };
 
+  useEffect(() => {
     check();
     intervalRef.current = setInterval(check, POLL_INTERVAL);
     return () => clearInterval(intervalRef.current);
   }, []);
 
+  // Sync with model switching — immediate health check on switch start/end
+  useEffect(() => {
+    const onSwitch = () => check();
+    window.addEventListener('model-switching', onSwitch);
+    return () => window.removeEventListener('model-switching', onSwitch);
+  }, []);
+
   if (!health) return null;
 
-  const allOk = health.sglang && health.db;
+  const allOk = health.vllm && health.db;
   const issues: string[] = [];
-  if (!health.sglang) issues.push('SGLang');
+  if (!health.vllm) issues.push('vLLM');
   if (!health.db) issues.push('Database');
 
   return (
@@ -50,9 +57,9 @@ export function ConnectionStatus() {
       )}
       {showTooltip && (
         <div className="connection-tooltip">
-          <div className={`connection-tooltip-row ${health.sglang ? 'ok' : 'error'}`}>
-            <span className={`connection-dot-sm ${health.sglang ? 'ok' : 'error'}`} />
-            SGLang: {health.sglang ? 'Connected' : 'Disconnected'}
+          <div className={`connection-tooltip-row ${health.vllm ? 'ok' : 'error'}`}>
+            <span className={`connection-dot-sm ${health.vllm ? 'ok' : 'error'}`} />
+            vLLM: {health.vllm ? 'Connected' : 'Disconnected'}
           </div>
           <div className={`connection-tooltip-row ${health.db ? 'ok' : 'error'}`}>
             <span className={`connection-dot-sm ${health.db ? 'ok' : 'error'}`} />

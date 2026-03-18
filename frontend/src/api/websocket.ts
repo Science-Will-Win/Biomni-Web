@@ -138,6 +138,10 @@ function isValidWSEvent(data: unknown): boolean {
     case 'plan_complete':
       return true;
     case 'refusal_event':
+    case 'tool_retrieval_start':
+    case 'tool_retrieval_done':
+    case 'step_execute':
+    case 'plan_retry':
       return true;
     default:
       return false;

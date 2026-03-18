@@ -1,7 +1,7 @@
 """LLM Service — central LLM management layer.
 
 Wraps Biomni's get_llm() to provide model switching, API key management,
-execution mode resolution, and SGLang health checking.
+execution mode resolution, and vLLM health checking.
 """
 
 import logging
@@ -22,7 +22,7 @@ from models.schemas import ApiKeyInfo, ModelInfo
 logger = logging.getLogger("aigen.llm_service")
 
 _PROVIDER_TO_SOURCE = {
-    "sglang": "Custom",
+    "vllm": "Custom",
     "openai": "OpenAI",
     "anthropic": "Anthropic",
     "gemini": "Gemini",
@@ -63,6 +63,19 @@ class LLMService:
 
     # ─── Initialization ───
 
+    @staticmethod
+    def _is_model_available(name: str, models: dict) -> bool:
+        """Check if a model is actually usable (local folder exists, etc.)."""
+        mc = models.get(name)
+        if not mc:
+            return False
+        if mc["type"] == "local":
+            local_path = mc.get("local_path")
+            if not local_path:
+                return False
+            return (get_models_dir() / local_path).is_dir()
+        return True  # API models are always "available" at init time
+
     async def ensure_initialized(self) -> None:
         """Load model_registry.yaml and restore active model from DB."""
         if self._initialized:
@@ -77,6 +90,7 @@ class LLMService:
 
         # Try to restore active model from DB
         active = settings.ACTIVE_MODEL
+        models = self._registry.get("models", {})
         try:
             async with async_session_factory() as db:
                 result = await db.execute(
@@ -85,15 +99,26 @@ class LLMService:
                 setting = result.scalar_one_or_none()
                 if setting and setting.value.get("name"):
                     candidate = setting.value["name"]
-                    if candidate in self._registry.get("models", {}):
+                    # DB 후보도 availability 검증 (로컬 모델 폴더 존재 여부)
+                    if candidate in models and self._is_model_available(candidate, models):
                         active = candidate
+                    elif candidate in models:
+                        logger.warning(f"DB active_model '{candidate}' is in registry but not available (folder missing?)")
         except Exception as e:
             logger.warning(f"Could not restore active model from DB: {e}")
 
-        # Validate against registry
-        if active not in self._registry.get("models", {}):
-            models = self._registry.get("models", {})
-            active = next(iter(models)) if models else ""
+        # Validate against registry AND actual availability
+        models = self._registry.get("models", {})
+        if active not in models or not self._is_model_available(active, models):
+            # Fallback to first available model
+            active = ""
+            for name, mc in models.items():
+                if self._is_model_available(name, models):
+                    active = name
+                    break
+            if not active:
+                active = next(iter(models)) if models else ""
+                logger.warning(f"No available models found, using registry default: {active}")
 
         self._active_model = active
         self._initialized = True
@@ -105,7 +130,7 @@ class LLMService:
         """Return info about the currently active model."""
         self._reload_registry_if_changed()
         mc = self._registry["models"][self._active_model]
-        display = mc.get("local_path", self._active_model) if mc["type"] == "local" else self._active_model
+        display = mc.get("display_name") or (mc.get("local_path", self._active_model) if mc["type"] == "local" else self._active_model)
         return ModelInfo(
             name=self._active_model,
             display_name=display,
@@ -122,7 +147,7 @@ class LLMService:
         """
         self._reload_registry_if_changed()
         models: list[ModelInfo] = []
-        sglang_ok = await self._check_sglang_health()
+        vllm_ok = await self._check_vllm_health()
         models_dir = get_models_dir()
 
         for name, mc in self._registry.get("models", {}).items():
@@ -135,12 +160,12 @@ class LLMService:
             if name == self._active_model:
                 status = "active"
             elif mc["type"] == "local":
-                status = "available" if sglang_ok else "unavailable"
+                status = "available" if vllm_ok else "unavailable"
             else:
                 key = await self._resolve_api_key(mc["provider"], db)
                 status = "available" if key else "no_api_key"
 
-            display = mc.get("local_path", name) if mc["type"] == "local" else name
+            display = mc.get("display_name") or (mc.get("local_path", name) if mc["type"] == "local" else name)
             models.append(ModelInfo(
                 name=name,
                 display_name=display,
@@ -152,8 +177,11 @@ class LLMService:
 
     async def switch_model(self, model_name: str, db: AsyncSession) -> ModelInfo:
         """Switch active model and persist to DB."""
-        if model_name not in self._registry.get("models", {}):
+        models = self._registry.get("models", {})
+        if model_name not in models:
             raise KeyError(model_name)
+        if not self._is_model_available(model_name, models):
+            raise ValueError(f"Model '{model_name}' is not available (folder missing or not configured)")
 
         self._active_model = model_name
 
@@ -221,11 +249,11 @@ class LLMService:
 
         base_url = None
         if mc["type"] == "local":
-            base_url = settings.SGLANG_BASE_URL
+            base_url = settings.VLLM_BASE_URL
 
-        # For local SGLang models, create ChatOpenAI directly so we can pass
+        # For local vLLM models, create ChatOpenAI directly so we can pass
         # skip_special_tokens=False — needed to preserve [THINK]/[/THINK] tokens
-        # that SGLang would otherwise strip from the response.
+        # that vLLM would otherwise strip from the response.
         if mc["type"] == "local":
             from langchain_openai import ChatOpenAI
             return ChatOpenAI(
@@ -269,10 +297,6 @@ class LLMService:
             mode_label = "api_execute"
             execution_mode = "tool_select"
             code_marker = "execute"
-        elif mc.get("use_code_gen", False):
-            mode_label = "wrap_execute"
-            execution_mode = "tool_select"
-            code_marker = "wrap"
         else:
             mode_label = "native_execute"
             execution_mode = "native"
@@ -305,13 +329,14 @@ class LLMService:
             "execution_mode": execution_mode,
             "code_marker": code_marker,
             "mode_label": mode_label,
-            "use_code_gen": mc.get("use_code_gen", False),
+
             "think_format": mc.get("think_format"),
             "code_execute_format": mc.get("code_execute_format"),
             "code_result_format": mc.get("code_result_format"),
             "tool_result_format": mc.get("tool_result_format"),
             "solution_format": mc.get("solution_format"),
             "tool_calls_format": mc.get("tool_calls_format"),
+            "use_llm_retrieval": mc.get("use_llm_retrieval", True),
             "refusal": refusal if refusal else None,
             "system_prompt": mc.get("system_prompt"),
             "use_llm_retrieval": mc.get("use_llm_retrieval", False),
@@ -341,7 +366,7 @@ class LLMService:
             "openai": settings.OPENAI_API_KEY,
             "anthropic": settings.ANTHROPIC_API_KEY,
             "gemini": settings.GEMINI_API_KEY,
-            "sglang": settings.CUSTOM_MODEL_API_KEY or "EMPTY",
+            "vllm": settings.CUSTOM_MODEL_API_KEY or "EMPTY",
         }
         value = env_map.get(provider, "")
         return value if value else None
@@ -381,12 +406,12 @@ class LLMService:
             result.append(ApiKeyInfo(provider=p, is_set=bool(key)))
         return result
 
-    # ─── SGLang Health Check ───
+    # ─── vLLM Health Check ───
 
-    async def _check_sglang_health(self) -> bool:
-        """Check if the SGLang model server is reachable."""
+    async def _check_vllm_health(self) -> bool:
+        """Check if the vLLM model server is reachable."""
         try:
-            base = get_settings().SGLANG_BASE_URL.replace("/v1", "")
+            base = get_settings().VLLM_BASE_URL.replace("/v1", "")
             url = f"{base}/health"
             async with httpx.AsyncClient(timeout=3.0) as client:
                 resp = await client.get(url)

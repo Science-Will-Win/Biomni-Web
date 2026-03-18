@@ -22,6 +22,7 @@ export interface ChatState {
   mode: 'agent' | 'plan';
   error: string | null;
   stepQuestions: StepQuestion[];
+  planRetrying: boolean;
 }
 
 const initialState: ChatState = {
@@ -31,6 +32,7 @@ const initialState: ChatState = {
   mode: (localStorage.getItem('inferenceMode') as 'agent' | 'plan') || 'plan',
   error: null,
   stepQuestions: [],
+  planRetrying: false,
 };
 
 // ─── Actions ───
@@ -54,7 +56,8 @@ export type ChatAction =
   | { type: 'TRUNCATE_FROM'; payload: number }
   | { type: 'ADD_STEP_QUESTION'; payload: StepQuestion }
   | { type: 'REMOVE_STEP_QUESTION'; payload: number }
-  | { type: 'CLEAR_STEP_QUESTIONS' };
+  | { type: 'CLEAR_STEP_QUESTIONS' }
+  | { type: 'PLAN_RETRY' };
 
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
@@ -120,7 +123,11 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     }
 
     case 'SET_STREAMING':
-      return { ...state, isStreaming: action.payload };
+      return {
+        ...state,
+        isStreaming: action.payload,
+        ...(action.payload ? { planRetrying: false } : {}),
+      };
 
     case 'SET_MODE':
       localStorage.setItem('inferenceMode', action.payload);
@@ -167,6 +174,23 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
 
     case 'CLEAR_STEP_QUESTIONS':
       return { ...state, stepQuestions: [] };
+
+    case 'PLAN_RETRY': {
+      const msgs = [...state.messages];
+      const last = msgs[msgs.length - 1];
+      if (last && last.role === 'assistant') {
+        let content = last.content;
+        // Close any open [THINK] block so it doesn't swallow next attempt's tokens
+        if (/\[THINK\](?![\s\S]*\[\/THINK\])/.test(content)) {
+          content += '\n[/THINK]';
+        }
+        if (/<think>(?![\s\S]*<\/think>)/i.test(content)) {
+          content += '\n</think>';
+        }
+        msgs[msgs.length - 1] = { ...last, content };
+      }
+      return { ...state, messages: msgs, planRetrying: true };
+    }
 
     default:
       return state;

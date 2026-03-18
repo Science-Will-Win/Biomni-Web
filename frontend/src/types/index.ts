@@ -62,7 +62,7 @@ export interface ToolResultEvent {
 
 export interface StepStartEvent {
   type: 'step_start';
-  step_start: { step: number };
+  step_start: { step: number; retrieved_tools?: string[] };
 }
 
 export interface DoneEvent {
@@ -89,6 +89,7 @@ export interface PlanComplete {
   goal: string;
   steps: PlanStep[];
   results: PlanStepResult[];
+  codes?: Record<number, string | { code: string; language?: string; execution?: Record<string, unknown>; fix_attempts?: number }>;
 }
 
 // ─── Conversations ───
@@ -141,6 +142,7 @@ export interface ModelInfo {
 
 export interface ModelSwitchRequest {
   model_name: string;
+  force?: boolean;
 }
 
 export interface ApiKeyRequest {
@@ -273,12 +275,31 @@ export interface ChatMessage {
   files?: Array<Record<string, unknown>>;
 }
 
+export interface CodeSegment {
+  type: 'thinking' | 'planning' | 'text' | 'code' | 'output' | 'solution';
+  content: string;
+}
+
 export interface CodeData {
   code: string;
   language: string;
   execution?: Record<string, unknown>;
   fixAttempts?: number;
   stepIndex: number;
+  segments?: CodeSegment[];
+}
+
+export interface CategorizedRetrieval {
+  tools: string[];
+  dataLake: string[];
+  libraries: string[];
+}
+
+export interface StepExecution {
+  code: string;
+  observation: string;
+  success: boolean;
+  iteration: number;
 }
 
 export interface DetailPanelData {
@@ -288,6 +309,10 @@ export interface DetailPanelData {
   codes: Record<number, string | CodeData>;
   analysis: string;
   currentStep: number;
+  retrievedTools?: string[];
+  retrievalResult?: CategorizedRetrieval;
+  toolRetrievalStatus?: 'idle' | 'running' | 'done';
+  stepExecutions?: Record<number, StepExecution[]>;
 }
 
 export interface PendingFile {

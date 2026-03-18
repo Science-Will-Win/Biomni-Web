@@ -2,23 +2,38 @@
 import { registerNode } from '../node-registry';
 import type { NodeComponentProps } from '../node-registry';
 import { PortRow } from '../components/PortRow';
+import { useState } from 'react';
+
+function formatFloat(n: number): string {
+  const s = String(n);
+  return s.includes('.') ? s : s + '.0';
+}
 
 function MatrixInput({ node, size, onPortValueChange }: NodeComponentProps & { size: number }) {
   const total = size * size;
   const val = (node.portValues?.out as number[]) ?? new Array(total).fill(0);
+  const [editIdx, setEditIdx] = useState<number | null>(null);
+  const [draft, setDraft] = useState('');
+
   return (
     <>
       <div className="ng-node-header"><span className="ng-node-title">{node.title}</span></div>
       <div className="ng-input-node-body" style={{ display: 'grid', gridTemplateColumns: `repeat(${size}, 1fr)`, gap: 3 }}>
         {Array.from({ length: total }, (_, i) => (
-          <input key={i} type="number" step="any" className="ng-input-node-field ng-interactive"
+          <input key={i} type="text" inputMode="decimal" className="ng-input-node-field ng-interactive"
             style={{ textAlign: 'center', padding: '2px 1px', fontSize: 10 }}
-            value={val[i] ?? 0}
+            value={editIdx === i ? draft : formatFloat(val[i] ?? 0)}
+            onFocus={e => { setEditIdx(i); setDraft(e.target.value); }}
             onChange={e => {
+              const raw = e.target.value;
+              if (raw !== '' && !/^-?\d*\.?\d*$/.test(raw)) return;
+              setDraft(raw);
               const next = [...val];
-              next[i] = parseFloat(e.target.value) || 0;
+              next[i] = raw === '' ? 0 : (parseFloat(raw) || 0);
               onPortValueChange?.(node.id, 'out', next);
             }}
+            onBlur={() => setEditIdx(null)}
+            onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
             onMouseDown={e => e.stopPropagation()} />
         ))}
       </div>

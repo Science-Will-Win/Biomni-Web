@@ -10,6 +10,8 @@ import { ConnectionLine, PendingConnectionLine, getPortCenter } from './Connecti
 import { PortTypes } from './port-types';
 import { GraphProvider } from './GraphContext';
 import { CreateNodeMenu } from './components/CreateNodeMenu';
+import { NodeDetailModal } from './components/NodeDetailModal';
+import { useAppContext } from '@/context/AppContext';
 import type { useGraphEngine } from './useGraphEngine';
 
 type GraphEngine = ReturnType<typeof useGraphEngine>;
@@ -17,6 +19,7 @@ type GraphEngine = ReturnType<typeof useGraphEngine>;
 interface GraphCanvasProps {
   engine: GraphEngine;
   visible?: boolean;
+  skipInitialLayout?: boolean;
 }
 
 interface PendingConn {
@@ -35,18 +38,22 @@ function GraphNode({
   node,
   selected,
   multiSelected,
+  connectedPorts,
   onTitleChange,
   onPortValueChange,
   onMouseDown,
   onResizeStart,
+  onDoubleClick,
 }: {
   node: NodeData;
   selected: boolean;
   multiSelected: boolean;
+  connectedPorts?: Set<string>;
   onTitleChange: (id: string, title: string) => void;
   onPortValueChange: (nodeId: string, portName: string, value: unknown) => void;
   onMouseDown: (e: React.MouseEvent, nodeId: string) => void;
   onResizeStart: (e: React.MouseEvent, nodeId: string, handle: string) => void;
+  onDoubleClick: (e: React.MouseEvent, nodeId: string) => void;
 }) {
   const def = getNodeDef(node.type);
   if (!def) return null;
@@ -54,13 +61,14 @@ function GraphNode({
 
   return (
     <div
-      className={`ng-node ng-status-${node.status}${selected ? ' ng-node-selected' : ''}${multiSelected ? ' ng-node-selected' : ''}`}
+      className={`ng-node ng-status-${node.status} ng-cat-${(def.category || 'General').toLowerCase().replace(/\s+/g, '-')}${selected ? ' ng-node-selected' : ''}${multiSelected ? ' ng-node-selected' : ''}`}
       data-node-id={node.id}
       data-node-type={node.type}
-      style={{ position: 'absolute', left: node.x, top: node.y, width: node.width || 180 }}
+      style={{ position: 'absolute', left: node.x, top: node.y, width: node.width || def.minWidth || 180, minHeight: node.height }}
       onMouseDown={(e) => onMouseDown(e, node.id)}
+      onDoubleClick={(e) => onDoubleClick(e, node.id)}
     >
-      <Component node={node} onTitleChange={onTitleChange} onPortValueChange={onPortValueChange} />
+      <Component node={node} connectedPorts={connectedPorts} onTitleChange={onTitleChange} onPortValueChange={onPortValueChange} />
       {(selected || multiSelected) && RESIZE_HANDLES.map(h => (
         <div key={h} className={`ng-resize-handle ng-resize-${h}`}
           onMouseDown={(e) => { e.stopPropagation(); onResizeStart(e, node.id, h); }} />
@@ -69,9 +77,13 @@ function GraphNode({
   );
 }
 
-export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
+export function GraphCanvas({ engine, visible = true, skipInitialLayout = false }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { state, setNodeTitle, setPortValue, setViewport, selectNode, toggleSelectNode, setSelectedNodes, selectConnection, addNode, updateNode, addConnection, removeConnection, removeNode, removeNodes, pushUndo, undo, redo, relayoutVertical } = engine;
+  const { dispatch: appDispatch } = useAppContext();
+  const { state, setNodeTitle, setNodeDescription, setPortValue, setViewport, selectNode, toggleSelectNode, setSelectedNodes, selectConnection, addNode, updateNode, addConnection, removeConnection, removeNode, removeNodes, pushUndo, undo, redo, relayoutVertical } = engine;
+
+  // Node detail modal state
+  const [detailNodeId, setDetailNodeId] = useState<string | null>(null);
 
   const dragRef = useRef<{
     type: 'pan' | 'node' | 'marquee';
@@ -119,8 +131,11 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
   const hasFitted = useRef(false);
   useEffect(() => {
     if (nodesArray.length > 0 && !hasFitted.current && containerRef.current) {
-      hasFitted.current = true;
-      requestAnimationFrame(() => fitToView(engine, containerRef.current!));
+      requestAnimationFrame(() => {
+        if (containerRef.current && fitToView(engine, containerRef.current)) {
+          hasFitted.current = true;
+        }
+      });
     }
   }, [nodesArray.length, engine]);
   useEffect(() => { if (nodesArray.length === 0) hasFitted.current = false; }, [nodesArray.length]);
@@ -128,8 +143,16 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
   // Measure actual node heights from DOM and relayout for edge-to-edge equal spacing
   const measuredRef = useRef(false);
   const measureRetryRef = useRef(0);
+  const initialFitDone = useRef(skipInitialLayout);
+  // When skipInitialLayout becomes true (e.g., localStorage restore), mark layout as done
   useEffect(() => {
-    if (nodesArray.length === 0) { measuredRef.current = false; measureRetryRef.current = 0; setLayoutReady(false); return; }
+    if (skipInitialLayout) {
+      initialFitDone.current = true;
+      setLayoutReady(true);
+    }
+  }, [skipInitialLayout]);
+  useEffect(() => {
+    if (nodesArray.length === 0) { measuredRef.current = false; measureRetryRef.current = 0; initialFitDone.current = false; setLayoutReady(false); return; }
     if (measuredRef.current) return;
     // Delay to allow DOM to render (retry up to 5 times if container not ready)
     const delay = measureRetryRef.current > 0 ? 100 : 50;
@@ -148,8 +171,20 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
         }
         return;
       }
+      // Refresh textareas first (원본 node-graph.js refreshTextareas 패턴)
+      // Skip user-resized nodes — their dimensions are locked
+      const textareas = container.querySelectorAll<HTMLTextAreaElement>('textarea.ng-input-node-field');
+      textareas.forEach(ta => {
+        const nodeEl = ta.closest('[data-node-id]') as HTMLElement | null;
+        const nid = nodeEl?.dataset.nodeId;
+        if (nid && state.nodes.get(nid)?.userResized) return;
+        ta.style.height = 'auto';
+        void ta.offsetHeight;  // force reflow
+        ta.style.height = ta.scrollHeight + 'px';
+      });
       let needsRelayout = false;
       for (const node of state.nodes.values()) {
+        if (node.userResized) continue;
         const el = container.querySelector(`[data-node-id="${node.id}"]`) as HTMLElement;
         if (el) {
           const measured = el.offsetHeight;
@@ -165,15 +200,32 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
         requestAnimationFrame(() => {
           relayoutVertical(50);
           requestAnimationFrame(() => {
-            if (containerRef.current) fitToView(engine, containerRef.current);
+            // Only fitToView on first measurement — preserve user's pan/zoom after that
+            if (!initialFitDone.current && containerRef.current) {
+              if (fitToView(engine, containerRef.current)) {
+                initialFitDone.current = true;
+              }
+            }
             setLayoutReady(true);
           });
         });
       } else {
         requestAnimationFrame(() => {
-          if (containerRef.current) fitToView(engine, containerRef.current);
+          if (!initialFitDone.current && containerRef.current) {
+            if (fitToView(engine, containerRef.current)) {
+              initialFitDone.current = true;
+            }
+          }
           setLayoutReady(true);
         });
+      }
+      // Delayed re-measurement: textarea autoResize may change node heights after initial render
+      // Only do 2nd pass on first measurement — preserve sizes after that
+      if (!initialFitDone.current) {
+        setTimeout(() => {
+          measuredRef.current = false;
+          setRenderTick(t => t + 1);
+        }, 350);
       }
     }, delay);
     return () => clearTimeout(timer);
@@ -188,21 +240,34 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
     if (nodesArray.length === 0) return;
     const timer = setTimeout(() => {
       if (containerRef.current) {
-        measuredRef.current = false;
-        setLayoutReady(false);
-        setRenderTick(t => t + 1);  // Re-trigger measurement effect
+        // measuredRef 유지 — 노드 크기 보존 (userResized 포함)
+        // renderTick만 갱신 — connection line이 새 DOM 좌표로 재계산
+        setRenderTick(t => t + 1);
+        setLayoutReady(true);
       }
     }, 50);
     return () => clearTimeout(timer);
   }, [visible, nodesArray.length]);
+
+  // Close detail modal when leaving graph tab
+  useEffect(() => {
+    if (!visible) setDetailNodeId(null);
+  }, [visible]);
 
   // Wheel zoom
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     const handleWheel = (e: WheelEvent) => {
+      const target = e.target as HTMLElement;
       // CreateNodeMenu 위에서는 메뉴 내 스크롤 우선
-      if ((e.target as HTMLElement).closest('.ng-create-menu')) return;
+      if (target.closest('.ng-create-menu')) return;
+      // Detail modal 위에서는 모달 내 스크롤 우선
+      if (target.closest('.ng-detail-overlay')) return;
+      // 스크롤 가능한 요소 위에서는 내부 스크롤 우선
+      const scrollable = target.closest('.ng-node-body, .ng-input-node-body')
+        || (target.matches('textarea, .ng-interactive') ? target : null);
+      if (scrollable && scrollable.scrollHeight > scrollable.clientHeight) return;
       e.preventDefault();
       setCreateMenu(null); // 메뉴 밖 wheel 시 메뉴 닫기
       const rect = container.getBoundingClientRect();
@@ -225,18 +290,31 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
       const pnId = portEl.dataset.nodeId;
       const pDir = portEl.dataset.portDir;
       const pType = portEl.dataset.portType || 'any';
-      if (pnId === pending.fromNodeId || pDir !== targetDir) {
+      if (pnId === pending.fromNodeId) {
         portEl.classList.add('ng-port-dimmed');
         return;
       }
       let ok: boolean;
       if (pending.connType === 'ref') {
+        // Ref: 방향 검사 (flow와 동일 — output↔input만)
+        if (pDir !== targetDir) {
+          portEl.classList.add('ng-port-dimmed');
+          return;
+        }
         const d = pnId ? getNodeDef(state.nodes.get(pnId)?.type || '') : null;
-        ok = !!d?.allowRef;
-      } else if (pending.fromDir === 'out') {
-        ok = PortTypes.isCompatible(pending.fromType, pType);
+        const pendingDef = getNodeDef(state.nodes.get(pending.fromNodeId)?.type || '');
+        ok = !!d?.allowRef || !!pendingDef?.allowRef;
       } else {
-        ok = PortTypes.isCompatible(pType, pending.fromType);
+        // Flow: 반대 방향만
+        if (pDir !== targetDir) {
+          portEl.classList.add('ng-port-dimmed');
+          return;
+        }
+        if (pending.fromDir === 'out') {
+          ok = PortTypes.isCompatible(pending.fromType, pType);
+        } else {
+          ok = PortTypes.isCompatible(pType, pending.fromType);
+        }
       }
       portEl.classList.add(ok ? 'ng-port-compatible' : 'ng-port-dimmed');
     });
@@ -258,18 +336,20 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
         const dx = (e.clientX - resize.startX) / s;
         const dy = (e.clientY - resize.startY) / s;
         const handle = resize.handle;
-        const MIN_W = 100, MIN_H = 40;
+        const node = engine.state.nodes.get(resize.nodeId);
+        const nodeDef = node ? getNodeDef(node.type) : null;
+        const MIN_W = nodeDef?.minWidth || 100;
+        const MIN_H = 40;
         let newX = resize.startNodeX, newY = resize.startNodeY;
         let newW = resize.startW, newH = resize.startH;
         if (handle.includes('e')) newW = Math.max(MIN_W, resize.startW + dx);
         if (handle.includes('w')) { newW = Math.max(MIN_W, resize.startW - dx); newX = resize.startNodeX + resize.startW - newW; }
         if (handle.includes('s')) newH = Math.max(MIN_H, resize.startH + dy);
         if (handle.includes('n')) { newH = Math.max(MIN_H, resize.startH - dy); newY = resize.startNodeY + resize.startH - newH; }
-        const node = engine.state.nodes.get(resize.nodeId);
         if (node) {
           node.x = newX; node.y = newY; node.width = newW; node.height = newH;
           const el = containerRef.current?.querySelector(`[data-node-id="${resize.nodeId}"]`) as HTMLElement | null;
-          if (el) { el.style.left = `${newX}px`; el.style.top = `${newY}px`; el.style.width = `${newW}px`; }
+          if (el) { el.style.left = `${newX}px`; el.style.top = `${newY}px`; el.style.width = `${newW}px`; el.style.height = `${newH}px`; }
           // Trigger re-render for connection updates
           if (!rafRef.current) {
             rafRef.current = requestAnimationFrame(() => { setRenderTick(t => t + 1); rafRef.current = 0; });
@@ -352,14 +432,14 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
       // Resize commit
       if (resizeRef.current) {
         const node = engine.state.nodes.get(resizeRef.current.nodeId);
-        if (node) engine.addNode({ ...node });
+        if (node) engine.addNode({ ...node, userResized: true });
         resizeRef.current = null;
         return;
       }
 
       // Smart right-click: if not moved, open create menu
       const rc = rightClickRef.current;
-      if (rc && !rc.moved && (e.button === 2)) {
+      if (rc && !rc.moved && (e.button === 2) && !detailNodeId) {
         const container = containerRef.current;
         if (container) {
           const target = e.target as HTMLElement;
@@ -386,8 +466,12 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
           const snap = findSnapPort(pending, mx, my, engine.state, container);
           if (snap) {
             engine.pushUndo();
-            if (pending.fromDir === 'out') engine.addConnection(pending.fromNodeId, pending.fromPort, snap.nodeId, snap.portName, pending.connType);
-            else engine.addConnection(snap.nodeId, snap.portName, pending.fromNodeId, pending.fromPort, pending.connType);
+            // Ref/Flow 동일: port 방향 기반 from/to 결정
+            if (pending.fromDir === 'out') {
+              engine.addConnection(pending.fromNodeId, pending.fromPort, snap.nodeId, snap.portName, pending.connType);
+            } else {
+              engine.addConnection(snap.nodeId, snap.portName, pending.fromNodeId, pending.fromPort, pending.connType);
+            }
           }
         }
         pendingConnRef.current = null;
@@ -425,15 +509,15 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
         }
         setMarquee(null);
       } else if (drag?.type === 'node') {
-        // Commit positions for group drag
+        // Commit positions for group drag — mark as userMoved to survive relayout
         if (drag.groupOffsets && drag.groupOffsets.size > 1) {
           for (const sid of drag.groupOffsets.keys()) {
             const sn = engine.state.nodes.get(sid);
-            if (sn) engine.addNode({ ...sn });
+            if (sn) engine.addNode({ ...sn, userMoved: true });
           }
         } else if (drag.nodeId) {
           const node = engine.state.nodes.get(drag.nodeId);
-          if (node) engine.addNode({ ...node });
+          if (node) engine.addNode({ ...node, userMoved: true });
         }
       }
       dragRef.current = null;
@@ -449,37 +533,93 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
   const handlePortMouseDown = useCallback((e: React.MouseEvent, nodeId: string, portName: string, portDir: 'in' | 'out', portType: string) => {
     e.preventDefault();
     e.stopPropagation();
-    const connType: ConnectionType = e.button === 2 ? 'ref' : 'flow';
+    const isRightClick = e.button === 2;
 
-    // Detach existing flow connection from input port
-    if (connType === 'flow' && portDir === 'in') {
-      for (const conn of state.connections.values()) {
-        if (conn.to === nodeId && conn.toPort === portName && conn.type !== 'ref') {
-          removeConnection(conn.id);
-          const fromNode = state.nodes.get(conn.from);
-          if (fromNode) {
-            const center = getPortCenter(fromNode, conn.fromPort, 'out', containerRef.current);
-            const p: PendingConn = { fromNodeId: conn.from, fromPort: conn.fromPort, fromDir: 'out', fromType: portType, connType, startX: center.x, startY: center.y };
-            pendingConnRef.current = p;
-            highlightPorts(p);
-            return;
+    // Input port: 재연결 로직
+    if (portDir === 'in') {
+      // 공통 (좌/우클릭): selected connection이 이 port에 연결된 경우 → 떼어서 재연결
+      const selectedConn = state.selectedConnectionId
+        ? state.connections.get(state.selectedConnectionId) : null;
+      if (selectedConn && selectedConn.to === nodeId && selectedConn.toPort === portName) {
+        removeConnection(selectedConn.id);
+        const fromNode = state.nodes.get(selectedConn.from);
+        if (fromNode) {
+          const center = getPortCenter(fromNode, selectedConn.fromPort, 'out', containerRef.current);
+          const p: PendingConn = {
+            fromNodeId: selectedConn.from, fromPort: selectedConn.fromPort,
+            fromDir: 'out', fromType: portType,
+            connType: selectedConn.type,  // flow/ref 원래 타입 유지
+            startX: center.x, startY: center.y,
+          };
+          pendingConnRef.current = p;
+          highlightPorts(p);
+          return;
+        }
+      }
+
+      // Selected conn 없을 때: 클릭 타입별 fallback
+      if (!isRightClick) {
+        // 좌클릭 fallback: 아무 flow 떼어서 재연결
+        for (const conn of state.connections.values()) {
+          if (conn.to === nodeId && conn.toPort === portName && conn.type === 'flow') {
+            removeConnection(conn.id);
+            const fromNode = state.nodes.get(conn.from);
+            if (fromNode) {
+              const center = getPortCenter(fromNode, conn.fromPort, 'out', containerRef.current);
+              const p: PendingConn = { fromNodeId: conn.from, fromPort: conn.fromPort,
+                fromDir: 'out', fromType: portType, connType: 'flow',
+                startX: center.x, startY: center.y };
+              pendingConnRef.current = p;
+              highlightPorts(p);
+              return;
+            }
           }
         }
+      } else {
+        // 우클릭 fallback: 아무 ref 떼어서 재연결
+        for (const conn of state.connections.values()) {
+          if (conn.to === nodeId && conn.toPort === portName && conn.type === 'ref') {
+            removeConnection(conn.id);
+            const fromNode = state.nodes.get(conn.from);
+            if (fromNode) {
+              const center = getPortCenter(fromNode, conn.fromPort, 'out', containerRef.current);
+              const p: PendingConn = { fromNodeId: conn.from, fromPort: conn.fromPort,
+                fromDir: 'out', fromType: portType, connType: 'ref',
+                startX: center.x, startY: center.y };
+              pendingConnRef.current = p;
+              highlightPorts(p);
+              return;
+            }
+          }
+        }
+        // ref 없으면 → 새 ref 시작 (fallthrough)
       }
     }
 
+    // Output port 또는 input에 떼낼 conn 없을 때: 새 연결 시작
     const node = state.nodes.get(nodeId);
     if (!node) return;
+
+    // Input/Math 카테고리 노드는 ref 연결 불가 (순수 값/연산 노드)
+    const nodeDef = getNodeDef(node.type);
+    const noRefCategories = ['Input', 'Math'];
+    const canStartRef = nodeDef ? !noRefCategories.includes(nodeDef.category) : true;
+    const connType: ConnectionType = (isRightClick && canStartRef) ? 'ref' : 'flow';
+
+    // 우클릭인데 ref 불가능한 노드면 무시
+    if (isRightClick && !canStartRef) return;
+
     const center = getPortCenter(node, portName, portDir, containerRef.current);
     const p: PendingConn = { fromNodeId: nodeId, fromPort: portName, fromDir: portDir, fromType: portType, connType, startX: center.x, startY: center.y };
     pendingConnRef.current = p;
     highlightPorts(p);
-  }, [state.connections, state.nodes, removeConnection, highlightPorts]);
+  }, [state.connections, state.nodes, state.selectedConnectionId, removeConnection, highlightPorts]);
 
   // Marquee shift state for additive selection
   const marqueeShiftRef = useRef(false);
 
   const handleContainerMouseDown = useCallback((e: React.MouseEvent) => {
+    if (detailNodeId) return; // block all mouse interactions while modal is open
     if (e.button === 2 || e.button === 1) {
       e.preventDefault();
       // Smart right-click: start tracking, defer pan until 5px movement
@@ -503,10 +643,11 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
       dragRef.current = { type: 'marquee', startX: e.clientX, startY: e.clientY, startPanX: gx, startPanY: gy, startNodeX: 0, startNodeY: 0 };
       setMarquee({ x: gx, y: gy, w: 0, h: 0 });
     }
-  }, [state.panX, state.panY, state.scale, selectNode]);
+  }, [state.panX, state.panY, state.scale, selectNode, detailNodeId]);
 
   // Double-click on empty area → Create Node menu
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    if (detailNodeId) return; // block while modal is open
     // Only on background (not on nodes)
     const target = e.target as HTMLElement;
     if (target.closest('.ng-node') || target.closest('.ng-create-menu') || target.closest('.ng-zoom-controls')) return;
@@ -517,7 +658,16 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
     const graphX = (e.clientX - rect.left - state.panX) / state.scale;
     const graphY = (e.clientY - rect.top - state.panY) / state.scale;
     setCreateMenu({ screenX: e.clientX - rect.left, screenY: e.clientY - rect.top, graphX, graphY });
-  }, [state.panX, state.panY, state.scale]);
+  }, [state.panX, state.panY, state.scale, detailNodeId]);
+
+  // Double-click on node body → open detail modal
+  const handleNodeDoubleClick = useCallback((e: React.MouseEvent, nodeId: string) => {
+    // Header double-click is for title editing — skip
+    if ((e.target as HTMLElement).closest('.ng-node-header')) return;
+    e.stopPropagation();
+    setCreateMenu(null); // close create menu if open
+    setDetailNodeId(nodeId);
+  }, []);
 
   // Create a new node from menu selection
   const handleCreateNode = useCallback((type: string) => {
@@ -532,7 +682,7 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
       tool: def.defaultConfig.tool || '',
       x: createMenu.graphX,
       y: createMenu.graphY,
-      width: 180,
+      width: def.minWidth || 180,
       status: (def.defaultConfig.status as NodeData['status']) || 'pending',
       stepNum: def.defaultConfig.stepNum || '',
       portValues: def.defaultConfig.portValues ? { ...def.defaultConfig.portValues } : undefined,
@@ -694,7 +844,16 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
     doc.addEventListener('keydown', handleKeyDown);
     return () => doc.removeEventListener('keydown', handleKeyDown);
   }, [state.selectedConnectionId, state.selectedNodeId, state.selectedNodeIds, state.nodes, state.connections, removeConnection, removeNode, removeNodes, selectConnection, selectNode, engine, pushUndo, undo, redo]);
-  const handleTitleChange = useCallback((id: string, title: string) => { setNodeTitle(id, title); }, [setNodeTitle]);
+  const handleTitleChange = useCallback((id: string, title: string) => {
+    setNodeTitle(id, title);
+    // Sync step node title back to plan
+    if (id.startsWith('step-')) {
+      const stepIndex = parseInt(id.split('-')[1]) - 1;
+      if (stepIndex >= 0) {
+        appDispatch({ type: 'UPDATE_STEP_NAME', payload: { stepIndex, name: title } });
+      }
+    }
+  }, [setNodeTitle, appDispatch]);
   const handlePortValueChange = useCallback((nId: string, pName: string, val: unknown) => { setPortValue(nId, pName, val); }, [setPortValue]);
 
   // Node resize start
@@ -712,6 +871,17 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
   }, [state.nodes, pushUndo]);
 
   const graphCtx = useMemo(() => ({ onPortMouseDown: handlePortMouseDown }), [handlePortMouseDown]);
+
+  // 각 노드별 flow 연결된 input port 집합 계산 (ref는 데이터 전달이 아니므로 제외)
+  const connectedPortsMap = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const conn of state.connections.values()) {
+      if (conn.type !== 'flow') continue;
+      if (!map.has(conn.to)) map.set(conn.to, new Set());
+      map.get(conn.to)!.add(conn.toPort);
+    }
+    return map;
+  }, [state.connections]);
 
   return (
     <GraphProvider value={graphCtx}>
@@ -735,7 +905,8 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
               <GraphNode key={node.id} node={node}
                 selected={node.id === state.selectedNodeId}
                 multiSelected={state.selectedNodeIds.has(node.id)}
-                onTitleChange={handleTitleChange} onPortValueChange={handlePortValueChange} onMouseDown={handleNodeMouseDown} onResizeStart={handleResizeStart} />
+                connectedPorts={connectedPortsMap.get(node.id)}
+                onTitleChange={handleTitleChange} onPortValueChange={handlePortValueChange} onMouseDown={handleNodeMouseDown} onResizeStart={handleResizeStart} onDoubleClick={handleNodeDoubleClick} />
             ))}
           </div>
         </div>
@@ -761,6 +932,15 @@ export function GraphCanvas({ engine, visible = true }: GraphCanvasProps) {
             onClose={() => setCreateMenu(null)}
           />
         )}
+        {detailNodeId && state.nodes.get(detailNodeId) && (
+          <NodeDetailModal
+            node={state.nodes.get(detailNodeId)!}
+            onClose={() => setDetailNodeId(null)}
+            onTitleChange={handleTitleChange}
+            onDescriptionChange={(id, desc) => setNodeDescription(id, desc)}
+            onPortValueChange={handlePortValueChange}
+          />
+        )}
       </div>
     </GraphProvider>
   );
@@ -777,13 +957,30 @@ function findSnapPort(pending: PendingConn, mx: number, my: number,
     if (nId === pending.fromNodeId) continue;
     const def = getNodeDef(node.type);
     if (!def) continue;
-    for (const p of def.ports.filter(pp => pp.dir === targetDir)) {
+    // Ref/Flow 모두 반대 방향 포트만 (output↔input)
+    const portsToCheck = def.ports.filter(pp => pp.dir === targetDir);
+    for (const p of portsToCheck) {
       let ok: boolean;
-      if (pending.connType === 'ref') ok = !!def.allowRef;
-      else if (pending.fromDir === 'out') ok = PortTypes.isCompatible(pending.fromType, p.type);
-      else ok = PortTypes.isCompatible(p.type, pending.fromType);
+      if (pending.connType === 'ref') {
+        // 둘 중 하나가 allowRef면 연결 가능
+        const pendingDef = getNodeDef(gs.nodes.get(pending.fromNodeId)?.type || '');
+        ok = !!def.allowRef || !!pendingDef?.allowRef;
+        // Forward ref 차단: step끼리 같은 depth 불가
+        if (ok) {
+          const pendingNode = gs.nodes.get(pending.fromNodeId);
+          if (pendingNode?.stepNum && node.stepNum) {
+            const pendingNum = parseFloat(pendingNode.stepNum);
+            const nodeNum = parseFloat(node.stepNum);
+            if (pendingNum === nodeNum) ok = false;
+          }
+        }
+      } else if (pending.fromDir === 'out') {
+        ok = PortTypes.isCompatible(pending.fromType, p.type);
+      } else {
+        ok = PortTypes.isCompatible(p.type, pending.fromType);
+      }
       if (!ok) continue;
-      const c = getPortCenter(node, p.name, targetDir, container);
+      const c = getPortCenter(node, p.name, p.dir, container);
       const d = Math.hypot(mx - c.x, my - c.y);
       if (d < bestDist) { bestDist = d; best = { nodeId: nId, portName: p.name, x: c.x, y: c.y }; }
     }
@@ -791,25 +988,28 @@ function findSnapPort(pending: PendingConn, mx: number, my: number,
   return best;
 }
 
-function fitToView(engine: GraphEngine, container: HTMLElement, padding = 40) {
+function fitToView(engine: GraphEngine, container: HTMLElement, padding = 40): boolean {
   const nodes = Array.from(engine.state.nodes.values());
-  if (nodes.length === 0) return;
+  if (nodes.length === 0) return false;
   const cw = container.clientWidth, ch = container.clientHeight;
-  if (cw === 0 || ch === 0) return;
+  if (cw === 0 || ch === 0) return false;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const n of nodes) {
-    const w = n.width || 180;
-    const h = n.height || 80;
+    // 원본 node-graph.js fitToView 패턴: DOM el.offsetWidth/Height 사용
+    const el = container.querySelector(`[data-node-id="${n.id}"]`) as HTMLElement | null;
+    const w = el ? el.offsetWidth : (n.width || 180);
+    const h = el ? el.offsetHeight : (n.height || 80);
     if (n.x < minX) minX = n.x;
     if (n.y < minY) minY = n.y;
     if (n.x + w > maxX) maxX = n.x + w;
     if (n.y + h > maxY) maxY = n.y + h;
   }
   const cW = maxX - minX, cH = maxY - minY;
-  if (cW <= 0 || cH <= 0) return;
+  if (cW <= 0 || cH <= 0) return false;
   // Cap scale at 1.0 (don't zoom in, only zoom out to fit)
   const s = Math.max(0.2, Math.min(1, Math.min((cw - padding * 2) / cW, (ch - padding * 2) / cH)));
   engine.setViewport((cw - cW * s) / 2 - minX * s, (ch - cH * s) / 2 - minY * s, s);
+  return true;
 }
 
 function getViewportCenterGraphPos(

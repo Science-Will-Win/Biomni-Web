@@ -129,10 +129,52 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
                   language: String(result.language || 'python'),
                   execution: result.execution as Record<string, unknown> | undefined,
                   fixAttempts: (result.fix_attempts as number) || 0,
+                  segments: Array.isArray(result.segments) ? result.segments as import('@/types').CodeSegment[] : undefined,
                 },
               });
             }
           }
+          break;
+        }
+
+        case 'plan_retry': {
+          console.log('[WS] plan_retry:', eventData);
+          chatDispatch({ type: 'PLAN_RETRY' });
+          break;
+        }
+
+        case 'tool_retrieval_start': {
+          appDispatch({ type: 'SET_TOOL_RETRIEVAL_STATUS', payload: 'running' });
+          break;
+        }
+
+        case 'tool_retrieval_done': {
+          appDispatch({ type: 'SET_TOOL_RETRIEVAL_STATUS', payload: 'done' });
+          const trDone = eventData.tool_retrieval_done as Record<string, unknown> | undefined;
+          const trTools = (trDone?.tools as string[]) ?? [];
+          const trDataLake = (trDone?.data_lake as string[]) ?? [];
+          const trLibraries = (trDone?.libraries as string[]) ?? [];
+          if (trTools.length > 0 || trDataLake.length > 0 || trLibraries.length > 0) {
+            appDispatch({
+              type: 'SET_RETRIEVAL_RESULT',
+              payload: { tools: trTools, dataLake: trDataLake, libraries: trLibraries },
+            });
+          }
+          break;
+        }
+
+        case 'step_execute': {
+          const stepExec = (eventData.step_execute as Record<string, unknown>) ?? eventData;
+          appDispatch({
+            type: 'ADD_STEP_EXECUTION',
+            payload: {
+              stepIndex: (stepExec.step as number) - 1,
+              code: (stepExec.code as string) || '',
+              observation: (stepExec.observation as string) || '',
+              success: (stepExec.success as boolean) ?? true,
+              iteration: (stepExec.iteration as number) ?? 0,
+            },
+          });
           break;
         }
 
@@ -151,6 +193,12 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
             payload: { stepIndex: stepNum - 1, status: 'running' },
           });
           appDispatch({ type: 'SET_CURRENT_STEP', payload: stepNum });
+
+          // Store retrieved tools (same list every step, dispatch once on first step)
+          const retrievedTools = stepStart.retrieved_tools as string[] | undefined;
+          if (retrievedTools && retrievedTools.length > 0 && stepNum === 1) {
+            appDispatch({ type: 'SET_RETRIEVED_TOOLS', payload: retrievedTools });
+          }
           break;
         }
 
@@ -158,12 +206,36 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
           console.log('[WS] done:', eventData);
           chatDispatch({ type: 'SET_STREAMING', payload: false });
           appDispatch({ type: 'BUMP_CONVERSATIONS' }); // Refresh sidebar (title may have been updated)
+          // Mark running steps as stopped if user triggered stop
+          const stopped = (eventData.stopped as boolean) ?? (event.stopped as boolean);
+          if (stopped) {
+            appDispatch({ type: 'MARK_RUNNING_STEPS_STOPPED' });
+          }
           const planComplete = (eventData.plan_complete as Record<string, unknown>) ??
             (event.plan_complete as Record<string, unknown>);
           if (planComplete) {
             // plan_complete means all steps finished — complete any remaining running steps
             appDispatch({ type: 'COMPLETE_PREVIOUS_RUNNING_STEPS', payload: 999 });
             chatDispatch({ type: 'SET_PLAN_COMPLETE', payload: planComplete as unknown as PlanComplete });
+            // Populate codes in detail panel for Code tab
+            const codes = planComplete.codes as Record<string, unknown> | undefined;
+            if (codes) {
+              for (const [key, val] of Object.entries(codes)) {
+                const idx = Number(key);
+                if (typeof val === 'string') {
+                  appDispatch({ type: 'SET_STEP_CODE', payload: { stepIndex: idx, code: val } });
+                } else if (val && typeof val === 'object') {
+                  const c = val as Record<string, unknown>;
+                  appDispatch({ type: 'SET_STEP_CODE', payload: {
+                    stepIndex: idx,
+                    code: String(c.code),
+                    language: String(c.language || 'python'),
+                    execution: c.execution as Record<string, unknown> | undefined,
+                    fixAttempts: (c.fix_attempts as number) || 0,
+                  }});
+                }
+              }
+            }
             // Populate analysis in detail panel if provided
             const analysis = planComplete.analysis as string | undefined;
             if (analysis) {

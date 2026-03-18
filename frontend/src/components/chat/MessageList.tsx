@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 
 import { useChatContext } from '@/context/ChatContext';
+import { useAppContext } from '@/context/AppContext';
 import { useSmartScroll } from '@/hooks/useSmartScroll';
 import { useWebSocket } from '@/context/WebSocketContext';
 import { truncateConversation } from '@/api/conversations';
@@ -9,15 +10,18 @@ import { useTranslation } from '@/i18n';
 
 export function MessageList() {
   const { state, dispatch } = useChatContext();
+  const { dispatch: appDispatch } = useAppContext();
   const { sendMessage } = useWebSocket();
   const { t } = useTranslation();
   const { containerRef, scrollToBottom, showScrollButton } = useSmartScroll(state.isStreaming);
 
   const handleSaveEdit = useCallback(async (messageIndex: number, newContent: string) => {
     const convId = state.conversationId;
-    if (!convId) return;
     try {
-      await truncateConversation(convId, messageIndex);
+      if (convId) {
+        await truncateConversation(convId, messageIndex);
+      }
+      appDispatch({ type: 'CLEAR_DETAIL_PANEL' });
       dispatch({ type: 'TRUNCATE_FROM', payload: messageIndex });
       sendMessage(newContent);
     } catch (err) {

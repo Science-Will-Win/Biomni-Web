@@ -95,12 +95,13 @@ class ModelInfo(BaseModel):
     name: str
     display_name: str = ""  # Folder name for local models, same as name for API
     type: str  # "local" or "api"
-    provider: str  # "sglang", "openai", "anthropic", "gemini"
+    provider: str  # "vllm", "openai", "anthropic", "gemini"
     status: str = "available"
 
 
 class ModelSwitchRequest(BaseModel):
     model_name: str
+    force: bool = False
 
 
 class ApiKeyRequest(BaseModel):
@@ -163,6 +164,8 @@ class ToolCallRequest(BaseModel):
 class ExecuteCodeRequest(BaseModel):
     code: str
     language: str = "python"
+    conv_id: Optional[str] = None
+    step_index: Optional[int] = None
 
 
 class NodeManifest(BaseModel):
@@ -184,6 +187,13 @@ class FileUploadResponse(BaseModel):
 
 
 # ─── Plan ───
+
+class PlanRequest(BaseModel):
+    prompt: str
+    conv_id: str
+
+class PlanResponse(BaseModel):
+    plan: str
 
 class ReplanRequest(BaseModel):
     conv_id: str

@@ -300,23 +300,6 @@ function GeneralTab({
         />
       </div>
 
-      <div className="setting-item">
-        <label className="setting-label">
-          Compact Prompt Mode
-          <span className="setting-description" style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Uses a minimal code-gen prompt for small models. May cause formatting errors.
-          </span>
-        </label>
-        <label className="toggle-switch">
-          <input
-            type="checkbox"
-            checked={draft.useCompactPrompt}
-            onChange={(e) => update('useCompactPrompt', e.target.checked ? true : false)}
-          />
-          <span className="slider round"></span>
-        </label>
-      </div>
-
       <div className="setting-section-divider" />
       <div className="setting-section-title">Refusal (Local Models)</div>
 

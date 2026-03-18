@@ -112,10 +112,33 @@ export function PlanStepsBox({ toolCalls, toolResults, messageIndex }: Props) {
       currentStep: steps.length,
     };
     toolResults?.forEach(tr => {
-      if ((tr as Record<string, unknown>).code && tr.step != null) {
-        planData.codes[tr.step - 1] = String((tr as Record<string, unknown>).code);
+      const res = tr.result as Record<string, unknown> | undefined;
+      if (res && typeof res === 'object' && res.code && tr.step != null) {
+        planData.codes[tr.step - 1] = {
+          code: String(res.code),
+          language: String(res.language || 'python'),
+          execution: res.execution as Record<string, unknown> | undefined,
+          fixAttempts: (res.fix_attempts as number) || 0,
+          stepIndex: tr.step - 1,
+          ...(Array.isArray(res.segments) ? { segments: res.segments as import('@/types').CodeSegment[] } : {}),
+        };
       }
     });
+    // Preserve existing retrieval result and tool retrieval status
+    const existing = appState.detailPanelData;
+    if (existing?.retrievalResult) {
+      planData.retrievalResult = existing.retrievalResult;
+    }
+    if (existing?.retrievedTools) {
+      planData.retrievedTools = existing.retrievedTools;
+    }
+    if (existing?.toolRetrievalStatus) {
+      planData.toolRetrievalStatus = existing.toolRetrievalStatus;
+    }
+    // Preserve step executions
+    if (existing?.stepExecutions) {
+      planData.stepExecutions = existing.stepExecutions;
+    }
     appDispatch({ type: 'SET_DETAIL_PANEL_DATA', payload: planData });
     appDispatch({ type: 'SET_ACTIVE_DETAIL_TAB', payload: 'outputs' });
   };
@@ -221,11 +244,16 @@ export function PlanStepsBox({ toolCalls, toolResults, messageIndex }: Props) {
     sendMessage(userMsg.content, files);
   };
 
-  // Extract solution text from results
-  const allResults = (toolResults || []).map(tr => ({
+  // Extract solution text from results (merge live toolResults + restored panelResults)
+  const allResults = [
+    ...(toolResults || []),
+    ...(panelResults || []).filter(pr =>
+      !(toolResults || []).some(tr => tr.step === pr.step)
+    ),
+  ].map(tr => ({
     step: tr.step ?? 0, tool: tr.tool, success: tr.success, result: tr.result,
   }));
-  const solutionResult = allResults.find(r => {
+  const solutionResult = [...allResults].reverse().find(r => {
     const d = r.result as Record<string, unknown> | null;
     return d && typeof d === 'object' && typeof (d as Record<string, unknown>).solution === 'string';
   });
@@ -242,10 +270,15 @@ export function PlanStepsBox({ toolCalls, toolResults, messageIndex }: Props) {
     if (lastText) {
       const text = String((lastText.result as Record<string, unknown>).text);
       const m = text.match(/\[SOLUTION\]([\s\S]*?)\[\/SOLUTION\]/)
-             || text.match(/<solution>([\s\S]*?)<\/solution>/i);
+             || text.match(/<solution>([\s\S]*?)<\/solution>/i)
+             || text.match(/<solution>([\s\S]+)$/i)
+             || text.match(/\[SOLUTION\]([\s\S]+)$/);
       if (m) solutionText = m[1].trim();
     }
   }
+
+  const toolRetrievalStatus = appState.detailPanelData?.toolRetrievalStatus;
+  const retrievalResult = appState.detailPanelData?.retrievalResult;
 
   // Analysis status
   const analysisStatus = (() => {
@@ -279,6 +312,15 @@ export function PlanStepsBox({ toolCalls, toolResults, messageIndex }: Props) {
           >
             ↻
           </button>
+        </div>
+        <div className={`plan-tool-retrieval-row${toolRetrievalStatus === 'running' ? ' running' : ''}${toolRetrievalStatus === 'done' ? ' done' : ''}`}>
+          {(toolRetrievalStatus === 'running' || toolRetrievalStatus === 'done') && (
+            <>
+              {toolRetrievalStatus === 'running' && <span className="analyzing-spinner" />}
+              {toolRetrievalStatus === 'done' && <span className="analyzing-check">✓</span>}
+              <span>{t('label.tool_retrieval')}</span>
+            </>
+          )}
         </div>
       </div>
       <div className="plan-steps">
@@ -353,6 +395,9 @@ function PlanStepItem({ step, index, stepResults, onRetry, onAsk, onEdit, convId
           <div className="step-indicator">{indicator}</div>
           <div className="step-content">
             <div className="step-name">{step.name}</div>
+            {step.description && (
+              <div className="step-description">{step.description}</div>
+            )}
             {step.tool && (
               <div className="step-tool">{getToolLabel(step.tool)}</div>
             )}
@@ -379,6 +424,37 @@ function PlanStepItem({ step, index, stepResults, onRetry, onAsk, onEdit, convId
           <StepResultContent results={stepResults} stepIndex={index} convId={convId} appDispatch={appDispatch} />
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Result Meta Line (shared) ───
+
+function ResultMetaLine({ obj, stepIndex, appDispatch, t }: {
+  obj: Record<string, unknown>;
+  stepIndex: number;
+  appDispatch: React.Dispatch<import('@/context/AppContext').AppAction>;
+  t: (key: string) => string;
+}) {
+  const duration = typeof obj.duration === 'number' ? `${obj.duration.toFixed(1)}s` : undefined;
+  const tokens = typeof obj.tokens === 'number' ? `${obj.tokens} tokens` : undefined;
+  const metaText = [duration, tokens].filter(Boolean).join(' · ');
+
+  const handleMoreDetail = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    appDispatch({ type: 'SET_ACTIVE_DETAIL_TAB', payload: 'outputs' });
+    setTimeout(() => {
+      const el = document.querySelector(`.output-step-section[data-step="${stepIndex + 1}"]`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  };
+
+  return (
+    <div className="result-meta-line">
+      <button className="step-more-detail-btn" onClick={handleMoreDetail}>
+        {t('label.more_detail') || 'More detail'}
+      </button>
+      {metaText && <span className="result-meta-minimal">{metaText}</span>}
     </div>
   );
 }
@@ -441,14 +517,38 @@ function SingleResultView({ result, stepIndex, convId, appDispatch }: SingleResu
       ? <ThinkBlock content={thinkContent} />
       : null;
 
-    // Text fallback result
-    if (typeof obj.text === 'string') {
-      const text = obj.text as string;
-      const truncated = text.length > 500 ? text.slice(0, 500) + '...' : text;
+    // Text fallback result (skip if code exists — handled below)
+    if (typeof obj.text === 'string' && !obj.code) {
+      let displayText = (obj.text as string)
+        // Strip execute blocks: closed, or unclosed (up to next observation/execute/end)
+        .replace(/<execute>[\s\S]*?<\/execute>/gi, '')
+        .replace(/<execute>[\s\S]*?(?=<observation>|<execute>|$)/gi, '')
+        .replace(/\[EXECUTE\][\s\S]*?\[\/EXECUTE\]/g, '')
+        .replace(/\[EXECUTE\][\s\S]*?(?=\[OBSERVATION\]|\[EXECUTE\]|$)/g, '')
+        // Strip observation tags (extract inner content or remove)
+        .replace(/<observation>[\s\S]*?<\/observation>/gi, '')
+        .replace(/\[OBSERVATION\][\s\S]*?\[\/OBSERVATION\]/g, '')
+        .replace(/<observation>[\s\S]*$/gi, '')
+        .replace(/\[OBSERVATION\][\s\S]*$/g, '')
+        // Strip solution/think blocks
+        .replace(/<solution>[\s\S]*?<\/solution>/gi, '')
+        .replace(/\[SOLUTION\][\s\S]*?\[\/SOLUTION\]/g, '')
+        .replace(/<solution>[\s\S]*$/gi, '')
+        .replace(/\[SOLUTION\][\s\S]*$/g, '')
+        .replace(/\[THINK\][\s\S]*?\[\/THINK\]/g, '')
+        .replace(/<think>[\s\S]*?<\/think>/gi, '')
+        .replace(/<think>[\s\S]*$/gi, '')
+        .replace(/<\/think>/gi, '')
+        .trim();
+      if (!displayText) {
+        return thinkBlock ? <div className="step-section-minimal">{thinkBlock}</div> : null;
+      }
+      const truncated = displayText.length > 500 ? displayText.slice(0, 500) + '...' : displayText;
       return (
         <div className="step-section-minimal">
           {thinkBlock}
           <div className="step-brief-summary"><MarkdownContent text={truncated} /></div>
+          <ResultMetaLine obj={obj} stepIndex={stepIndex} appDispatch={appDispatch} t={t} />
         </div>
       );
     }
@@ -460,6 +560,7 @@ function SingleResultView({ result, stepIndex, convId, appDispatch }: SingleResu
           {thinkBlock}
           <span className="section-label-minimal">Solution</span>
           <div className="step-brief-summary"><MarkdownContent text={String(obj.solution)} /></div>
+          <ResultMetaLine obj={obj} stepIndex={stepIndex} appDispatch={appDispatch} t={t} />
         </div>
       );
     }
@@ -470,9 +571,23 @@ function SingleResultView({ result, stepIndex, convId, appDispatch }: SingleResu
       const lineCount = code.split('\n').length;
       const lang = String(obj.language || 'python');
       const fixAttempts = obj.fix_attempts as number | undefined;
+      const reasoning = typeof obj.reasoning === 'string' ? obj.reasoning : undefined;
+      const importCorrections = obj.import_corrections as string[] | undefined;
       return (
         <div className="step-section-minimal">
           {thinkBlock}
+          {reasoning && (
+            <div className="step-brief-summary">
+              <MarkdownContent text={reasoning.length > 500 ? reasoning.slice(0, 500) + '...' : reasoning} />
+            </div>
+          )}
+          {importCorrections && importCorrections.length > 0 && (
+            <div className="import-corrections">
+              {importCorrections.map((c, i) => (
+                <span key={i} className="import-correction-item">Import fixed: {c}</span>
+              ))}
+            </div>
+          )}
           <span className="section-label-minimal">Code Generated</span>
           <div className="code-gen-summary">
             {lineCount} lines of {lang}
@@ -487,6 +602,7 @@ function SingleResultView({ result, stepIndex, convId, appDispatch }: SingleResu
             <div className="code-fix-info">Auto-corrected ({fixAttempts} attempt{fixAttempts > 1 ? 's' : ''})</div>
           )}
           {obj.execution && <ExecutionResultInline execution={obj.execution as Record<string, unknown>} stepIndex={stepIndex} convId={convId} />}
+          <ResultMetaLine obj={obj} stepIndex={stepIndex} appDispatch={appDispatch} t={t} />
         </div>
       );
     }
@@ -497,10 +613,6 @@ function SingleResultView({ result, stepIndex, convId, appDispatch }: SingleResu
         ? (Array.isArray(obj.summary) ? (obj.summary as string[]).join('\n') : String(obj.summary))
         : '';
       const abbreviated = rawSummary.length > 250 ? extractSummaryHeaders(rawSummary) : rawSummary;
-
-      const duration = typeof obj.duration === 'number' ? `${obj.duration.toFixed(1)}s` : undefined;
-      const tokens = typeof obj.tokens === 'number' ? `${obj.tokens} tokens` : undefined;
-      const metaText = [duration, tokens].filter(Boolean).join(' · ');
 
       return (
         <div className="step-section-minimal">
@@ -514,18 +626,7 @@ function SingleResultView({ result, stepIndex, convId, appDispatch }: SingleResu
           {/* Mini charts */}
           {obj.graph_type === 'efficiency' && <MiniEfficiencyChart data={obj} />}
           {obj.graph_type === 'timeline' && <MiniTimelineChart data={obj} />}
-          <div className="result-meta-line">
-            <button
-              className="step-more-detail-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                appDispatch({ type: 'SET_ACTIVE_DETAIL_TAB', payload: 'outputs' });
-              }}
-            >
-              {t('label.more_detail') || 'More detail'}
-            </button>
-            {metaText && <span className="result-meta-minimal">{metaText}</span>}
-          </div>
+          <ResultMetaLine obj={obj} stepIndex={stepIndex} appDispatch={appDispatch} t={t} />
         </div>
       );
     }
@@ -538,6 +639,7 @@ function SingleResultView({ result, stepIndex, convId, appDispatch }: SingleResu
         <div className="step-section-minimal">
           {thinkBlock}
           <div className="step-brief-summary">{first}{more}</div>
+          <ResultMetaLine obj={obj} stepIndex={stepIndex} appDispatch={appDispatch} t={t} />
         </div>
       );
     }
@@ -549,11 +651,19 @@ function SingleResultView({ result, stepIndex, convId, appDispatch }: SingleResu
 
     // stdout/stderr from code execution
     if (obj.stdout && typeof obj.stdout === 'string') {
-      const truncated = obj.stdout.length > 300 ? (obj.stdout as string).slice(0, 300) + '...' : obj.stdout as string;
+      const cleanStdout = (obj.stdout as string)
+        .replace(/<observation>([\s\S]*?)<\/observation>/gi, '$1')
+        .replace(/\[OBSERVATION\]([\s\S]*?)\[\/OBSERVATION\]/g, '$1')
+        .trim();
+      if (!cleanStdout) {
+        return thinkBlock ? <div className="step-section-minimal">{thinkBlock}</div> : null;
+      }
+      const truncated = cleanStdout.length > 300 ? cleanStdout.slice(0, 300) + '...' : cleanStdout;
       return (
         <div className="step-section-minimal">
           {thinkBlock}
           <pre className="code-stdout">{truncated}</pre>
+          <ResultMetaLine obj={obj} stepIndex={stepIndex} appDispatch={appDispatch} t={t} />
         </div>
       );
     }

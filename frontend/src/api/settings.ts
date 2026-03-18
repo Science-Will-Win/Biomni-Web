@@ -41,12 +41,18 @@ export interface ComposedPromptData {
   composed: string;
   sections: PromptSection[];
   custom: string;
+  editable_top?: string;
+  readonly_middle?: string;
+  editable_bottom?: string;
+  default_top?: string;
+  default_bottom?: string;
 }
 
 export interface ComposedPromptsResponse {
   full: ComposedPromptData;
   agent: ComposedPromptData;
   plan: ComposedPromptData;
+  tool_retrieval?: ComposedPromptData;
 }
 
 export async function getComposedPrompts(): Promise<ComposedPromptsResponse> {
