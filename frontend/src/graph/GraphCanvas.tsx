@@ -99,11 +99,15 @@ function GraphNode({
   );
 }
 
+<<<<<<< HEAD
+export function GraphCanvas({ engine, visible = true, skipInitialLayout = false }: GraphCanvasProps) {
+=======
 export function GraphCanvas({
   engine,
   visible = true,
   skipInitialLayout = false,
 }: GraphCanvasProps) {
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
   const containerRef = useRef<HTMLDivElement>(null);
   const { dispatch: appDispatch } = useAppContext();
   const {
@@ -229,6 +233,9 @@ export function GraphCanvas({
     }
   }, [skipInitialLayout]);
   useEffect(() => {
+<<<<<<< HEAD
+    if (nodesArray.length === 0) { measuredRef.current = false; measureRetryRef.current = 0; initialFitDone.current = false; setLayoutReady(false); return; }
+=======
     if (nodesArray.length === 0) {
       measuredRef.current = false;
       measureRetryRef.current = 0;
@@ -236,6 +243,7 @@ export function GraphCanvas({
       setLayoutReady(false);
       return;
     }
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
     if (measuredRef.current) return;
     // Delay to allow DOM to render (retry up to 5 times if container not ready)
     const delay = measureRetryRef.current > 0 ? 100 : 50;

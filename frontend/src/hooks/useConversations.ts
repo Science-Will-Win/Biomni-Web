@@ -47,6 +47,42 @@ export function useConversations() {
               content: m.content,
             };
 
+<<<<<<< HEAD
+          // Parse [PLAN_CREATE] or legacy [TOOL_CALLS]create_plan[ARGS] → populate toolCalls
+          {
+            const planCreateTag = '[PLAN_CREATE]';
+            const legacyTag = '[TOOL_CALLS]create_plan[ARGS]';
+            let planArgsStr: string | null = null;
+            let markerIdx = -1;
+
+            if (m.content.includes(planCreateTag)) {
+              markerIdx = m.content.indexOf(planCreateTag);
+              planArgsStr = m.content.substring(markerIdx + planCreateTag.length);
+            } else if (m.content.includes(legacyTag)) {
+              markerIdx = m.content.indexOf(legacyTag);
+              planArgsStr = m.content.substring(m.content.indexOf('[ARGS]') + '[ARGS]'.length);
+            }
+
+            if (planArgsStr !== null) {
+              try {
+                const args = JSON.parse(planArgsStr);
+                msg.toolCalls = [{ name: 'create_plan', arguments: args }];
+                // Preserve think blocks (content before marker), strip plan marker
+                msg.content = markerIdx > 0 ? m.content.substring(0, markerIdx).trim() : '';
+              } catch { /* ignore malformed */ }
+            }
+          }
+
+          // Hide raw [PLAN_COMPLETE] marker text and reconstruct plan box widget
+          if (m.content.includes('[PLAN_COMPLETE]')) {
+            try {
+              const planJson = m.content.substring(
+                m.content.indexOf('[PLAN_COMPLETE]') + '[PLAN_COMPLETE]'.length,
+              );
+              const planData = JSON.parse(planJson.trim());
+              if (planData.goal && planData.steps) {
+                msg.toolCalls = [{ name: 'create_plan', arguments: { goal: planData.goal, steps: planData.steps } }];
+=======
             // Parse [PLAN_CREATE] or legacy [TOOL_CALLS]create_plan[ARGS] → populate toolCalls
             {
               const planCreateTag = "[PLAN_CREATE]";
@@ -64,6 +100,7 @@ export function useConversations() {
                 planArgsStr = m.content.substring(
                   m.content.indexOf("[ARGS]") + "[ARGS]".length,
                 );
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
               }
 
               if (planArgsStr !== null) {
@@ -112,6 +149,11 @@ export function useConversations() {
           payload: { id: convId, messages },
         });
 
+<<<<<<< HEAD
+        chatDispatch({ type: 'SET_CONVERSATION', payload: { id: convId, messages } });
+
+=======
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
         // Persist last conversation for auto-restore on page reload
         try {
           localStorage.setItem("lastConversationId", convId);

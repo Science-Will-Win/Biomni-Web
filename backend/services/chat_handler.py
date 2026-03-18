@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 from typing import AsyncGenerator, Dict, Any, List, Optional, Tuple
 from uuid import UUID
@@ -52,9 +53,23 @@ def _fix_biomni_imports(code: str, mapping: Dict[str, str]) -> Tuple[str, List[s
         groups: Dict[str, List[str]] = {}
         for fn in func_names:
             correct = mapping.get(fn)
+            resolved_fn = fn
+
+            # Fuzzy match: model writes "encode" but actual function is "query_encode"
+            if not correct:
+                candidates = [k for k in mapping if k.endswith('_' + fn) or k.endswith(fn)]
+                if len(candidates) == 1:
+                    resolved_fn = candidates[0]
+                    correct = mapping[resolved_fn]
+
             if correct and correct != original_module:
-                corrections.append(f"{fn}: {original_module} → {correct}")
-                groups.setdefault(correct, []).append(fn)
+                corrections.append(f"{fn} → {resolved_fn}: {original_module} → {correct}")
+                groups.setdefault(correct, []).append(resolved_fn)
+            elif correct:
+                # Module is correct but function name was fuzzy-matched
+                if resolved_fn != fn:
+                    corrections.append(f"{fn} → {resolved_fn} (name corrected)")
+                groups.setdefault(original_module, []).append(resolved_fn)
             else:
                 groups.setdefault(original_module, []).append(fn)
 
@@ -164,6 +179,16 @@ def _parse_segments(full_response: str, behavior: Dict[str, Any]) -> List[Dict[s
                 )
                 if not overlaps:
                     all_blocks.append((m.start(), m.end(), seg_type, m.group(1).strip()))
+
+    # Phase 1b: Detect markdown fenced code blocks (```lang\n...\n```)
+    md_code_pat = re.compile(r'```(\w*)\n([\s\S]*?)```')
+    for m in md_code_pat.finditer(full_response):
+        overlaps = any(
+            b[0] <= m.start() < b[1] or b[0] < m.end() <= b[1]
+            for b in all_blocks
+        )
+        if not overlaps and m.group(2).strip():
+            all_blocks.append((m.start(), m.end(), "code", m.group(2).strip()))
 
     # Phase 2: Remove child blocks that are fully contained within thinking blocks.
     # This keeps <execute>/<observation> inside [THINK] as part of think content,
@@ -373,6 +398,8 @@ def _extract_plan_from_text(text: str, user_message: str) -> Optional[Dict[str, 
     # Strip think blocks (closed pairs only — safe; includes </thought> variant)
     cleaned = re.sub(r'<think>[\s\S]*?</(?:think|thought)>', '', text, flags=re.IGNORECASE)
     cleaned = re.sub(r'\[THINK\][\s\S]*?\[/THINK\]', '', cleaned, flags=re.IGNORECASE)
+    # Strip markdown code block fences (LLM sometimes wraps plan in ```)
+    cleaned = re.sub(r'```[a-zA-Z]*\n?', '', cleaned)
 
     lines = cleaned.strip().split("\n")
     steps: list = []
@@ -404,12 +431,21 @@ def _extract_plan_from_text(text: str, user_message: str) -> Optional[Dict[str, 
                 pass
 
     # Helper: split "Name: description" or "Name - description"
+    # If separator appears 2+ times (e.g. "short name: real name: description"),
+    # use the last two parts as (name, description).
     def _split_name_desc(txt: str) -> tuple:
         for sep in (":", "：", " - ", " – "):
             if sep in txt:
-                parts = txt.split(sep, 1)
-                name_part = parts[0].strip()
-                desc_part = parts[1].strip() if len(parts) > 1 else ""
+                parts = txt.split(sep)
+                if len(parts) >= 3:
+                    # "short name: real name: description" → last 2 parts
+                    name_part = parts[-2].strip()
+                    desc_part = parts[-1].strip()
+                elif len(parts) == 2:
+                    name_part = parts[0].strip()
+                    desc_part = parts[1].strip()
+                else:
+                    continue
                 if name_part and len(name_part) >= 3 and desc_part:
                     return (name_part[:100], desc_part.split("\n")[0][:500])
         # No separator found: smart truncation for long lines
@@ -457,93 +493,135 @@ def _extract_plan_from_text(text: str, user_message: str) -> Optional[Dict[str, 
             return stripped[:500]
         return ""
 
+    # ── Helper: collect contiguous blocks and return the LAST valid one ──
+    def _last_valid_block(
+        lines_list: list, pattern, extract_fn, min_steps: int = 4,
+    ) -> Optional[tuple]:
+        """Walk lines, group consecutive pattern matches into blocks,
+        return (first_step_idx, steps_list) of the LAST block with >= min_steps.
+        `extract_fn(match, idx)` → dict or None.
+        Non-matching lines that are blank / indented / sub-bullets are allowed
+        inside a block; other lines break the block.
+        """
+        all_blocks: list = []  # [(first_idx, [step_dicts])]
+        cur_block: list = []
+        cur_start: Optional[int] = None
+
+        for idx, line in enumerate(lines_list):
+            m = pattern.match(line) if hasattr(pattern, 'match') else pattern.search(line)
+            if m:
+                step = extract_fn(m, idx)
+                if step is not None:
+                    if cur_start is None:
+                        cur_start = idx
+                    cur_block.append(step)
+                    continue
+            # Non-match line: decide if block continues or breaks
+            stripped = line.strip()
+            if not stripped or line.startswith("   ") or line.startswith("\t"):
+                continue  # blank / indented description → keep block open
+            if stripped.startswith("- ") or stripped.startswith("* "):
+                continue  # sub-bullet → keep block open
+            # Check if it's a Goal: line (don't break on it)
+            if re.match(r'^(?:Goal|목표)\s*[:：]', stripped, re.IGNORECASE):
+                continue
+            # Real break
+            if cur_block:
+                all_blocks.append((cur_start, cur_block))
+                cur_block = []
+                cur_start = None
+
+        if cur_block:
+            all_blocks.append((cur_start, cur_block))
+
+        # Pick the last block with enough steps
+        for block_start, block_steps in reversed(all_blocks):
+            if len(block_steps) >= min_steps:
+                return (block_start, block_steps)
+        return None
+
     # Strategy 2: Numbered list items
     numbered_pat = re.compile(
         r"^\s*(\d+)[.)]\s*(?:\[[ x✓✗]?\]\s*)?"
         r"(.+)",
         re.IGNORECASE,
     )
-    first_step_idx = None
-    for idx, line in enumerate(lines):
-        m = numbered_pat.match(line)
-        if m:
-            step_text = m.group(2).strip().rstrip(".")
-            if step_text and len(step_text) > 5 and not step_text.lower().startswith(("here", "now", "let", "wait", "the ")):
-                if first_step_idx is None:
-                    first_step_idx = idx
-                name, desc = _split_name_desc(step_text)
-                if not desc:
-                    desc = _capture_next_desc(lines, idx, numbered_pat)
-                steps.append({"name": name, "description": desc})
 
-    if len(steps) >= 4 and _has_goal_line(lines, first_step_idx or 0):
-        goal = _find_goal(lines, first_step_idx or 0)
+    def _numbered_extract(m, idx):
+        step_text = m.group(2).strip().rstrip(".")
+        if step_text and len(step_text) > 5 and not step_text.lower().startswith(("here", "now", "let", "wait", "the ")):
+            name, desc = _split_name_desc(step_text)
+            if not desc:
+                desc = _capture_next_desc(lines, idx, numbered_pat)
+            return {"name": name, "description": desc}
+        return None
+
+    result = _last_valid_block(lines, numbered_pat, _numbered_extract)
+    if result and _has_goal_line(lines, len(lines)):
+        first_step_idx, steps = result
+        goal = _find_goal(lines, len(lines))
         logger.info(f"Plan extracted from numbered list: {len(steps)} steps")
         return {"goal": goal, "steps": steps[:10]}
 
     # Strategy 2b: Checkbox-only items (no number prefix)
-    steps = []
-    first_step_idx = None
     checkbox_pat = re.compile(
         r"^\s*\[[ x✓✗]?\]\s+(.+)",
         re.IGNORECASE,
     )
-    for idx, line in enumerate(lines):
-        m = checkbox_pat.match(line)
-        if m:
-            step_text = m.group(1).strip().rstrip(".")
-            if step_text and len(step_text) > 5:
-                if first_step_idx is None:
-                    first_step_idx = idx
-                name, desc = _split_name_desc(step_text)
-                if not desc:
-                    desc = _capture_next_desc(lines, idx, checkbox_pat)
-                steps.append({"name": name, "description": desc})
 
-    if len(steps) >= 4 and _has_goal_line(lines, first_step_idx or 0):
-        goal = _find_goal(lines, first_step_idx or 0)
+    def _checkbox_extract(m, idx):
+        step_text = m.group(1).strip().rstrip(".")
+        if step_text and len(step_text) > 5:
+            name, desc = _split_name_desc(step_text)
+            if not desc:
+                desc = _capture_next_desc(lines, idx, checkbox_pat)
+            return {"name": name, "description": desc}
+        return None
+
+    result = _last_valid_block(lines, checkbox_pat, _checkbox_extract)
+    if result and _has_goal_line(lines, len(lines)):
+        first_step_idx, steps = result
+        goal = _find_goal(lines, len(lines))
         logger.info(f"Plan extracted from checkbox items: {len(steps)} steps")
         return {"goal": goal, "steps": steps[:10]}
 
     # Strategy 3: Bullet points
-    steps = []
-    first_step_idx = None
     bullet_pat = re.compile(r"^\s*[-*•]\s+(.+)", re.IGNORECASE)
-    for idx, line in enumerate(lines):
-        m = bullet_pat.match(line)
-        if m:
-            step_text = m.group(1).strip().rstrip(".")
-            if step_text and len(step_text) > 5 and ":" not in step_text[:3]:
-                if first_step_idx is None:
-                    first_step_idx = idx
-                name, desc = _split_name_desc(step_text)
-                if not desc:
-                    desc = _capture_next_desc(lines, idx, bullet_pat)
-                steps.append({"name": name, "description": desc})
 
-    if len(steps) >= 4 and _has_goal_line(lines, first_step_idx or 0):
-        goal = _find_goal(lines, first_step_idx or 0)
-        logger.info(f"Plan extracted from bullet points: {len(steps)} steps")
-        return {"goal": goal, "steps": steps[:10]}
+    def _bullet_extract(m, idx):
+        step_text = m.group(1).strip().rstrip(".")
+        if step_text and len(step_text) > 5 and ":" not in step_text[:3]:
+            name, desc = _split_name_desc(step_text)
+            if not desc:
+                desc = _capture_next_desc(lines, idx, bullet_pat)
+            return {"name": name, "description": desc}
+        return None
+
+    result = _last_valid_block(lines, bullet_pat, _bullet_extract)
+    if result:
+        first_step_idx, steps = result
+        if _has_goal_line(lines, first_step_idx or 0):
+            goal = _find_goal(lines, first_step_idx or 0)
+            logger.info(f"Plan extracted from bullet points: {len(steps)} steps")
+            return {"goal": goal, "steps": steps[:10]}
 
     # Strategy 4: Bold items **Name**: description
-    steps = []
-    first_step_idx = None
     bold_pat = re.compile(r"\*\*([^*]+)\*\*\s*[:：]?\s*(.*)")
-    for idx, line in enumerate(lines):
-        m = bold_pat.search(line)
-        if m:
-            name = m.group(1).strip()
-            desc = m.group(2).strip() if m.group(2) else ""
-            if name and len(name) > 3:
-                if first_step_idx is None:
-                    first_step_idx = idx
-                steps.append({"name": name[:100], "description": desc})
 
-    if len(steps) >= 4 and _has_goal_line(lines, first_step_idx or 0):
-        goal = _find_goal(lines, first_step_idx or 0)
-        logger.info(f"Plan extracted from bold items: {len(steps)} steps")
-        return {"goal": goal, "steps": steps[:10]}
+    def _bold_extract(m, idx):
+        name = m.group(1).strip()
+        desc = m.group(2).strip() if m.group(2) else ""
+        if name and len(name) > 3:
+            return {"name": name[:100], "description": desc}
+        return None
+
+    result = _last_valid_block(lines, bold_pat, _bold_extract)
+    if result:
+        first_step_idx, steps = result
+        if _has_goal_line(lines, first_step_idx or 0):
+            goal = _find_goal(lines, first_step_idx or 0)
+            logger.info(f"Plan extracted from bold items: {len(steps)} steps")
+            return {"goal": goal, "steps": steps[:10]}
 
     return None
 
@@ -701,7 +779,7 @@ class ChatHandler:
         """Phase A: 별도 LLM 호출로 plan 생성 (checklist 형식).
 
         Local 방식 복원: per-attempt ChatOpenAI with repetition_penalty + temperature decay.
-        Local 모델: repetition_penalty 1.15→1.25→1.35, temperature decay 0.7^attempt
+        Local 모델: repetition_penalty 1.1→1.3→1.5, temperature decay 0.7^attempt
         API 모델: temperature decay만 적용 (repetition_penalty 불필요)
         """
         from langchain_openai import ChatOpenAI
@@ -732,7 +810,7 @@ class ChatHandler:
             if self._stop_flags.get(conv_id):
                 return
 
-            rep_penalty = 1.15 + 0.1 * attempt
+            rep_penalty = 1.1 + 0.2 * attempt
             base_temp = getattr(base_llm, 'temperature', 0.7) or 0.7
             temperature = max(0.1, base_temp * (0.7 ** attempt))
 
@@ -846,6 +924,7 @@ class ChatHandler:
             "goal": plan_data.get("goal", ""),
             "current_step": 0,
             "all_results": [],
+            "_plan_raw_response": full_response,
         }
 
     # ─── Phase B: Step Execution Loop ───
@@ -872,7 +951,9 @@ class ChatHandler:
         yield _ev("tool_retrieval_start", {"tool_retrieval_start": True})
 
         app_settings = get_settings()
-        data_lake_path = app_settings.BIOMNI_DATA_PATH or ""
+        data_lake_path = os.path.join(
+            app_settings.BIOMNI_DATA_PATH or "", "biomni_data", "data_lake"
+        )
 
         biomni_loader = BiomniToolLoader.get_instance()
         data_lake_items = scan_data_lake(data_lake_path)
@@ -886,28 +967,54 @@ class ChatHandler:
             retrieval_query = plan_state["goal"] + "\n" + "\n".join(
                 s.get("description", s.get("name", "")) for s in steps
             )
-            use_llm_ret = behavior.get("use_llm_retrieval", False)
+            use_llm_ret = behavior.get("use_llm_retrieval", True)
+            logger.info(f"Tool retrieval mode: use_llm={use_llm_ret}")
             if use_llm_ret:
-                llm = await llm_service.get_llm_instance(db=db)
+                # Cap max_tokens for retrieval — only needs short index list output
+                llm = await llm_service.get_llm_instance(db=db, max_tokens=8192)
+                logger.info("Calling retrieval_with_llm ...")
+                # Load custom retrieval prompt overrides from DB
+                top_override = None
+                bottom_override = None
+                try:
+                    from sqlalchemy import select as sa_select
+                    from models.setting import Setting
+                    result = await db.execute(sa_select(Setting).where(Setting.key == "system_prompt_modes"))
+                    row = result.scalar_one_or_none()
+                    if row and row.value:
+                        model_name = llm_service.get_current_model().name
+                        custom_raw = row.value.get(model_name, {}).get("tool_retrieval", "")
+                        if custom_raw and "===AUTO_TOOLS===" in custom_raw:
+                            parts = custom_raw.split("===AUTO_TOOLS===", 1)
+                            top_override = parts[0].strip("\n") or None
+                            bottom_override = parts[1].strip("\n") or None if len(parts) > 1 else None
+                except Exception as e:
+                    logger.debug(f"Could not load custom retrieval prompt: {e}")
                 retrieval_result = await biomni_loader.retrieval_with_llm(
                     retrieval_query, llm, max_tools=15,
                     data_lake_items=data_lake_items,
+                    top_override=top_override,
+                    bottom_override=bottom_override,
                 )
+                logger.info(f"retrieval_with_llm returned: {len(retrieval_result.get('tools', []))} tools")
             else:
                 kw_tools = biomni_loader.keyword_search(retrieval_query, max_results=15)
-                retrieval_result = {"tools": kw_tools, "data_lake": [], "libraries": []}
+                retrieval_result = {"tools": kw_tools, "data_lake": [], "libraries": [], "know_how": []}
 
             selected_tools = retrieval_result["tools"]
             selected_data_lake = retrieval_result["data_lake"]
             selected_libraries = retrieval_result["libraries"]
+            selected_know_how = retrieval_result.get("know_how", [])
             tool_desc = biomni_loader.format_tool_desc(selected_tools)
             retrieved_tool_names = [t.get("name", "?") for t in selected_tools]
             retrieved_data_lake_names = [d.get("name", "?") for d in selected_data_lake]
             retrieved_library_names = [l.get("name", "?") for l in selected_libraries]
+            retrieved_know_how_names = [k.get("name", "?") for k in selected_know_how]
             logger.info(
                 f"Plan retrieval: {len(retrieved_tool_names)} tools, "
                 f"{len(retrieved_data_lake_names)} data_lake, "
-                f"{len(retrieved_library_names)} libraries"
+                f"{len(retrieved_library_names)} libraries, "
+                f"{len(retrieved_know_how_names)} know_how"
             )
         else:
             tool_desc = ""
@@ -916,11 +1023,13 @@ class ChatHandler:
         plan_state["_retrieved_tool_names"] = retrieved_tool_names
         plan_state["_retrieved_data_lake_names"] = retrieved_data_lake_names
         plan_state["_retrieved_library_names"] = retrieved_library_names
+        plan_state["_retrieved_know_how_names"] = retrieved_know_how_names
 
         yield _ev("tool_retrieval_done", {"tool_retrieval_done": {
             "tools": retrieved_tool_names,
             "data_lake": retrieved_data_lake_names,
             "libraries": retrieved_library_names,
+            "know_how": retrieved_know_how_names,
         }})
 
         # ── Get A1 agent ──
@@ -972,11 +1081,6 @@ class ChatHandler:
         available_tools_text = self._wrap_available_tools(tool_desc, behavior)
 
         for step_idx in range(plan_state["current_step"], len(steps)):
-            # Skip steps already completed by LLM in a previous step's response
-            if step_idx in plan_state.get("llm_completed_steps", set()):
-                logger.info(f"Step {step_idx+1} skipped (already completed by LLM)")
-                continue
-
             if self._stop_flags.get(conv_id):
                 await self._save_plan_complete(conv_id, conv_svc, stopped=True)
                 yield _ev("done", {"done": True, "stopped": True})
@@ -1027,12 +1131,18 @@ class ChatHandler:
                 else f"- {l.get('name', '')}"
                 for l in selected_libraries
             )
+            kh_content = [
+                f"- {k.get('name', '')}: {k.get('description', '')}" if k.get("description")
+                else f"- {k.get('name', '')}"
+                for k in selected_know_how
+            ] if selected_know_how else None
             base_prompt = build_prompt(
                 PromptMode.FULL,
                 token_format=behavior,
                 data_lake_path=data_lake_path,
                 data_lake_content=dl_content,
                 library_content=lib_content,
+                know_how_docs=kh_content,
                 is_retrieval=bool(tool_desc),
                 is_step_execution=True,
                 self_critic=True,
@@ -1212,6 +1322,7 @@ class ChatHandler:
 
             # ── Parse ordered segments for interleaved rendering ──
             segments = _parse_segments(full_response, behavior)
+
             if segments:
                 final_result["segments"] = segments
 
@@ -1312,39 +1423,6 @@ class ChatHandler:
 
             # ── Incremental save to DB (survives backend restart) ──
             await self._save_plan_complete(conv_id, conv_svc)
-
-            # ── Detect [✓] checklist marks for multi-step completion ──
-            # LLM may mark future steps as completed in its response
-            # (checked already parsed above for step success determination)
-            newly_checked = {idx for idx in checked if idx > step_idx
-                             and idx not in plan_state.get("llm_completed_steps", set())}
-            if newly_checked:
-                logger.info(
-                    f"[{conv_id}] LLM checked steps beyond current ({step_idx+1}): "
-                    f"{sorted(i+1 for i in newly_checked)}"
-                )
-                for skip_idx in sorted(newly_checked):
-                    yield _ev("step_start", {"step_start": {
-                        "step": skip_idx + 1,
-                        "retrieved_tools": [],
-                    }})
-                    yield _ev("tool_result", {"tool_result": {
-                        "success": True,
-                        "result": {
-                            "reasoning": f"Completed by LLM during step {step_idx + 1}",
-                            "solution": "",
-                        },
-                        "tool": "llm_inline_completion",
-                        "step": skip_idx + 1,
-                    }})
-                    plan_state["all_results"].append({
-                        "step": skip_idx + 1,
-                        "tool": "llm_inline_completion",
-                        "success": True,
-                        "result": {"reasoning": f"Completed by LLM during step {step_idx + 1}"},
-                    })
-                llm_done = plan_state.get("llm_completed_steps", set())
-                plan_state["llm_completed_steps"] = llm_done | newly_checked
 
         # All steps done — run analysis as post-processing step
         plan_complete_data = await self._save_plan_complete(conv_id, conv_svc)

@@ -117,8 +117,10 @@ export function MessageBubble({ message, isLast, isStreaming, messageIndex, onSa
             <span>{chatState.planRetrying ? t('status.plan_retry') : t('status.creating_plan')}</span>
           </div>
         ) : hasPlanCall ? (
-          /* Plan mode: PlanStepsBox handles display — hide raw plan text */
-          null
+          /* Plan mode: show raw plan response as collapsed Planning block */
+          displayContent ? (
+            <SpecialTokenBlock label="Planning" content={displayContent} variant="think" isStreaming={false} />
+          ) : null
         ) : (
           <div className="message-text markdown-content">
             {displayContent ? (

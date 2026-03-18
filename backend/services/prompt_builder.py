@@ -232,6 +232,26 @@ CRITICAL VERIFICATION:
 - If a previous step concluded with an answer, critically evaluate whether that conclusion is well-supported by the evidence.
 - When new evidence contradicts earlier findings, update your conclusions accordingly rather than forcing consistency with prior results.
 - Question assumptions: just because a previous step marked something as complete does not mean the result is correct or optimal.
+- Do NOT assume or guess conclusions. You MUST use tools to obtain actual data, then verify and base your answers strictly on tool outputs and execution results, not on preconceived expectations.
+
+EVIDENCE-BASED ANSWERS ONLY:
+- Your final answer MUST be supported by actual results from the data lake or tool execution output. Conclusions not backed by data lake evidence are INVALID.
+- If your code returns EMPTY results, do NOT proceed with assumptions. Instead:
+  1. Check for typos or exact-match issues (use partial/fuzzy matching: str.contains with case=False)
+  2. Inspect the actual column values (print unique values, check dtypes)
+  3. Try alternative search strategies before concluding data is unavailable
+- If you CANNOT find the answer in the data lake after exhaustive search, explicitly state "No data found" — do NOT fabricate or assume values.
+- WRONG: "Assuming p-value is 0.0001..." — NEVER assume numerical values.
+- RIGHT: Run code to extract actual values from data lake, then report what the data shows.
+
+CANDIDATE VERIFICATION:
+- When given a list of candidates (variants, genes, compounds, etc.), verify each candidate INDIVIDUALLY, not all at once.
+- WRONG: Filter with all candidates combined (e.g., str.contains('|'.join(items))) — errors affect all results silently.
+- RIGHT: Check each candidate one by one, or use .isin() for exact matching of multiple values.
+- If ALL candidates return empty results, inspect the raw data first:
+  1. Print a few sample values from the relevant column to understand its format
+  2. Check if the column contains numeric IDs vs string IDs (e.g., 507080 vs "rs507080")
+  3. Adjust your search accordingly (strip prefixes, convert types, etc.)
 
 You may or may not receive feedbacks from human. If so, address the feedbacks by following the same procedure of multiple rounds of thinking, execution, and then coming up with a new solution."""
 
@@ -251,35 +271,53 @@ To achieve this, you will be using an interactive coding environment equipped wi
 
 You MUST use {think_fmt}...{think_close} to reason step by step before creating your plan. Think carefully about the task, then provide your plan.
 
-# RULES
-
-- Start with a Goal line, then list numbered steps with empty checkboxes
-- Goal: A concise noun phrase describing the overall objective
-- Each step MUST have a SHORT NAME (3-5 words) followed by a COLON, then a detailed description
-- The colon (:) separator between name and description is MANDATORY
-- Step names MUST be short noun phrases (3-5 words ONLY), NOT full sentences
-- NEVER write the entire description as the step name
-- Your plan MUST include at least 4 steps
-- Each step MUST perform a DISTINCT task — do NOT create steps that overlap or repeat similar work
-- Before finalizing, check that no two steps cover the same activity (e.g., do not have both "literature review" and "gene function research" as separate steps if they do the same thing)
-- Write the goal and step names/descriptions in the user's language
+Given a task, make a plan first. The plan should be a numbered list of steps that you will take to solve the task. Be specific and detailed.
+Write the goal and step names/descriptions in the user's language.
 
 # FORMAT
 
 Goal: [concise noun phrase describing the overall objective]
+1. [ ] First step : first step description
+2. [ ] Second step : second step description
+3. [ ] Third step : third step description
+4. [ ] Forth step : forth step description
 
+Your response MUST contain ONLY two parts:
+1. {think_fmt}...{think_close} tags with your reasoning
+2. The plan in the exact FORMAT above (Goal + numbered checklist)
+Do NOT output any other text, explanation, or markdown code blocks outside these two parts.
+Your task is ONLY to create a plan. Do NOT execute the plan or write any code.
+Create an efficient plan with at least 4 and at most 8 steps.
+Each step MUST use the format "Short name: detailed description" with a colon separator.
+
+#RULES
+- The plan describes WHAT TO DO, never the answer itself.
+- NEVER include actual answers, solutions, computed results, gene names, drug names, protein names, specific values, or code in the plan steps.
+- Each step must describe an ACTION to perform (e.g., "Query database X to find Y"), not a CONCLUSION (e.g., "Gene ABC is associated with disease XYZ").
+- WRONG: "Identify TP53 as the key tumor suppressor gene" — this is an answer, not a plan step.
+- RIGHT: "Query gene-disease databases to identify candidate tumor suppressor genes" — this is an action.
+- WRONG: "The IC50 value is 2.5 μM for compound X" — this is a result.
+- RIGHT: "Calculate IC50 values from the dose-response data" — this is an action.
+- If you already know the answer, you MUST still plan the steps to VERIFY it using tools and data, not state it directly.
+
+# EXAMPLE 1 (simple analysis, for reference only)
+
+Goal: Analyze gene expression patterns in red blood cell development
 1. [ ] Data collection: Gather relevant datasets from public databases and repositories for analysis
 2. [ ] Gene function analysis: Research the biological functions of each gene in relation to the target pathway
 3. [ ] Statistical modeling: Apply statistical methods to identify significant patterns in the data
 4. [ ] Results visualization: Create figures and plots to present the findings clearly
 
-WRONG (DO NOT do this - missing colon separator, name too long):
-1. [ ] Research the biological functions of each gene in relation to red blood cell development
+# EXAMPLE 2 (disease-gene investigation, for reference only)
 
-CORRECT (short name + colon + description):
-1. [ ] Gene function research: Research the biological functions of each gene in relation to red blood cell development
+Goal: Identify candidate genes associated with a rare cardiac disorder
+1. [ ] Literature search: Query biomedical literature databases to find publications related to the disorder and known genetic associations
+2. [ ] Gene-disease mapping: Use gene-disease association databases to retrieve genes linked to the phenotype and related conditions
+3. [ ] Pathway analysis: Analyze the biological pathways involving the candidate genes to identify functional relationships
+4. [ ] Variant annotation: Annotate candidate variants using population frequency and pathogenicity prediction databases
+5. [ ] Summary and ranking: Aggregate evidence across sources and rank candidate genes by strength of association
 
-# IMPORTANT
+# EXAMPLE 3 (data analysis workflow, for reference only)
 
 After your {think_fmt} block, output ONLY the plan in the exact format above.
 Each step MUST be: "number. [ ] Short Name: Detailed description"
@@ -392,7 +430,17 @@ def _build_env_resources_section(
         library_intro = "Based on your query, I've identified the following most relevant libraries that you can use:"
         import_instruction = ("IMPORTANT: When using any function, you MUST first import it from its exact module as listed in the dictionary.\n"
                               "DO NOT import functions from 'biomni_data'. 'biomni_data' is a directory for datasets, not a python module.\n"
-                              "For example: from [module_name] import [function_name]")
+                              "For example: from [module_name] import [function_name]\n"
+                              "\n"
+                              "PARAMETER RULES:\n"
+                              "- Use ONLY the parameters listed in the Function Dictionary above.\n"
+                              "- Required parameters MUST be provided. Optional parameters have defaults — omit them unless you need a different value.\n"
+                              "- Pass parameters by name (keyword arguments) to avoid ordering mistakes.\n"
+                              "- Example: result = query_pubmed(query=\"cancer biomarkers\", max_papers=5)\n"
+                              "- Do NOT invent parameter names that are not in the dictionary.\n"
+                              "\n"
+                              "CRITICAL: You may ONLY use functions listed in the Function Dictionary above. "
+                              "Do NOT invent or guess function names. If a function is not in the dictionary, it does not exist.")
     else:
         function_intro = "In your code, you will need to import the function location using the following dictionary of functions:"
         data_lake_intro = "You can write code to understand the data, process and utilize it for the task. Here is the list of datasets:"

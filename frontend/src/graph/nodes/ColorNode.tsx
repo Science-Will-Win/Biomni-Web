@@ -47,11 +47,15 @@ function ColorNodeComponent({ node, onPortValueChange }: NodeComponentProps) {
   const handleRgbaChange = (index: number, raw: string) => {
     const parsed = index < 3 ? parseInt(raw) : parseFloat(raw);
     const fallback = index < 3 ? 0 : 0;
+<<<<<<< HEAD
+    const num = isNaN(parsed) ? fallback : (index < 3 ? Math.max(0, Math.min(255, parsed)) : Math.max(0, Math.min(1, parsed)));
+=======
     const num = isNaN(parsed)
       ? fallback
       : index < 3
         ? Math.max(0, Math.min(255, parsed))
         : Math.max(0, Math.min(1, parsed));
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
     const newVal = [...val];
     newVal[index] = num;
     updateColor(newVal);
@@ -93,12 +97,18 @@ function ColorNodeComponent({ node, onPortValueChange }: NodeComponentProps) {
                 step={i < 3 ? 1 : 0.1}
                 className="ng-matrix-cell ng-interactive"
                 value={val[i] ?? (i < 3 ? 255 : 1)}
+<<<<<<< HEAD
+                onChange={e => handleRgbaChange(i, e.target.value)}
+                onBlur={e => { e.target.value = String(val[i] ?? (i < 3 ? 255 : 1)); }}
+                onMouseDown={e => e.stopPropagation()} />
+=======
                 onChange={(e) => handleRgbaChange(i, e.target.value)}
                 onBlur={(e) => {
                   e.target.value = String(val[i] ?? (i < 3 ? 255 : 1));
                 }}
                 onMouseDown={(e) => e.stopPropagation()}
               />
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
             </label>
           ))}
         </div>

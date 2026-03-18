@@ -50,6 +50,12 @@ export function DetailPanel() {
       </div>
 
       <div className="detail-content">
+<<<<<<< HEAD
+        <div className="detail-tab-content" style={{ display: activeTab === 'plan' ? 'flex' : 'none', flexDirection: 'column' as const, height: '100%', overflow: 'hidden' }}><PlanTab /></div>
+        <div className="detail-tab-content" style={{ display: activeTab === 'graph' ? 'flex' : 'none', flexDirection: 'column' as const, height: '100%', overflow: 'hidden', padding: 0 }}><GraphTab /></div>
+        <div className="detail-tab-content" style={{ display: activeTab === 'code' ? 'flex' : 'none', flexDirection: 'column' as const, height: '100%', overflow: 'hidden' }}><CodeTab /></div>
+        <div className="detail-tab-content" style={{ display: activeTab === 'outputs' ? 'flex' : 'none', flexDirection: 'column' as const, height: '100%', overflow: 'hidden' }}><OutputsTab /></div>
+=======
         <div
           className="detail-tab-content"
           style={{
@@ -95,6 +101,7 @@ export function DetailPanel() {
         >
           <OutputsTab />
         </div>
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
       </div>
     </div>
   );

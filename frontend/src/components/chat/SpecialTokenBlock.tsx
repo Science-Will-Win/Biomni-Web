@@ -54,7 +54,7 @@ export function SpecialTokenBlock({ label, content, variant = 'think', isStreami
           onClick={() => setExpanded(!expanded)}
         >
           <span className="cot-arrow">{expanded ? '\u25BC' : '\u25B6'}</span>
-          <span className="cot-label">Thinking</span>
+          <span className="cot-label">{label}</span>
         </button>
         {expanded ? (
           <div className="cot-content markdown-content">

@@ -49,6 +49,35 @@ const initialState: AppState = {
 // ─── Actions ───
 
 export type AppAction =
+<<<<<<< HEAD
+  | { type: 'TOGGLE_SIDEBAR' }
+  | { type: 'SET_SIDEBAR'; payload: boolean }
+  | { type: 'TOGGLE_DETAIL_PANEL' }
+  | { type: 'SET_DETAIL_PANEL_OPEN'; payload: boolean }
+  | { type: 'SET_DETAIL_PANEL_WIDTH'; payload: string }
+  | { type: 'SET_DETAIL_PANEL_DATA'; payload: DetailPanelData }
+  | { type: 'CLEAR_DETAIL_PANEL' }
+  | { type: 'SET_CURRENT_MODEL'; payload: ModelInfo }
+  | { type: 'SET_ACTIVE_DETAIL_TAB'; payload: AppState['activeDetailTab'] }
+  | { type: 'UPDATE_STEP_STATUS'; payload: { stepIndex: number; status: PlanStep['status'] } }
+  | { type: 'ADD_STEP_RESULT'; payload: PlanStepResult }
+  | { type: 'SET_STEP_CODE'; payload: { stepIndex: number; code: string; language?: string; execution?: Record<string, unknown>; fixAttempts?: number; segments?: import('../types').CodeSegment[] } }
+  | { type: 'SET_ANALYSIS'; payload: string }
+  | { type: 'SET_CURRENT_STEP'; payload: number }
+  | { type: 'UPDATE_STEP_TOOL'; payload: { stepIndex: number; toolName: string } }
+  | { type: 'RESET_STEP_RESULTS' }
+  | { type: 'MARK_RUNNING_STEPS_ERROR' }
+  | { type: 'MARK_RUNNING_STEPS_STOPPED' }
+  | { type: 'COMPLETE_PREVIOUS_RUNNING_STEPS'; payload: number }
+  | { type: 'UPDATE_STEP_NAME'; payload: { stepIndex: number; name: string } }
+  | { type: 'SET_RETRIEVED_TOOLS'; payload: string[] }
+  | { type: 'SET_RETRIEVAL_RESULT'; payload: import('../types').CategorizedRetrieval }
+  | { type: 'SET_TOOL_RETRIEVAL_STATUS'; payload: 'idle' | 'running' | 'done' }
+  | { type: 'ADD_STEP_EXECUTION'; payload: { stepIndex: number; code: string; observation: string; success: boolean; iteration: number } }
+  | { type: 'OPEN_MODAL'; payload: ModalType }
+  | { type: 'CLOSE_MODAL' }
+  | { type: 'BUMP_CONVERSATIONS' };
+=======
   | { type: "TOGGLE_SIDEBAR" }
   | { type: "SET_SIDEBAR"; payload: boolean }
   | { type: "TOGGLE_DETAIL_PANEL" }
@@ -104,6 +133,7 @@ export type AppAction =
   | { type: "OPEN_MODAL"; payload: ModalType }
   | { type: "CLOSE_MODAL" }
   | { type: "BUMP_CONVERSATIONS" };
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
 
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
@@ -175,6 +205,11 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
     case "SET_STEP_CODE": {
       if (!state.detailPanelData) return state;
+<<<<<<< HEAD
+      const { stepIndex, code, language, execution, fixAttempts, segments } = action.payload;
+      const value: string | CodeData = language
+        ? { code, language, execution, fixAttempts: fixAttempts || 0, stepIndex, ...(segments ? { segments } : {}) }
+=======
       const { stepIndex, code, language, execution, fixAttempts, segments } =
         action.payload;
       const value: string | CodeData = language
@@ -186,6 +221,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
             stepIndex,
             ...(segments ? { segments } : {}),
           }
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
         : code;
       return {
         ...state,
@@ -265,7 +301,11 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+<<<<<<< HEAD
+    case 'MARK_RUNNING_STEPS_STOPPED': {
+=======
     case "MARK_RUNNING_STEPS_STOPPED": {
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
       if (!state.detailPanelData) return state;
       return {
         ...state,
@@ -279,7 +319,11 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+<<<<<<< HEAD
+    case 'COMPLETE_PREVIOUS_RUNNING_STEPS': {
+=======
     case "COMPLETE_PREVIOUS_RUNNING_STEPS": {
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
       if (!state.detailPanelData) return state;
       const cutoff = action.payload; // 0-indexed: all steps before this index
       const steps = state.detailPanelData.steps.map((s, i) =>
@@ -293,7 +337,11 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+<<<<<<< HEAD
+    case 'UPDATE_STEP_NAME': {
+=======
     case "UPDATE_STEP_NAME": {
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
       if (!state.detailPanelData) return state;
       const steps = [...state.detailPanelData.steps];
       if (steps[action.payload.stepIndex]) {
@@ -361,7 +409,11 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+<<<<<<< HEAD
+    case 'OPEN_MODAL':
+=======
     case "OPEN_MODAL":
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
       return { ...state, activeModal: action.payload };
 
     case "CLOSE_MODAL":

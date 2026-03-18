@@ -285,7 +285,11 @@ export interface ChatMessage {
 }
 
 export interface CodeSegment {
+<<<<<<< HEAD
+  type: 'thinking' | 'planning' | 'text' | 'code' | 'output' | 'solution';
+=======
   type: "thinking" | "text" | "code" | "output" | "solution";
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
   content: string;
 }
 
