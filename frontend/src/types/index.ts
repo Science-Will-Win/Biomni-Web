@@ -37,12 +37,12 @@ export interface StopRequest {
 // ─── SSE Events ───
 
 export interface TokenEvent {
-  type: 'token';
+  type: "token";
   token: string;
 }
 
 export interface ToolCallEvent {
-  type: 'tool_call';
+  type: "tool_call";
   tool_call: {
     name: string;
     arguments: Record<string, unknown>;
@@ -51,7 +51,7 @@ export interface ToolCallEvent {
 }
 
 export interface ToolResultEvent {
-  type: 'tool_result';
+  type: "tool_result";
   tool_result: {
     success: boolean;
     result: unknown;
@@ -61,19 +61,19 @@ export interface ToolResultEvent {
 }
 
 export interface StepStartEvent {
-  type: 'step_start';
+  type: "step_start";
   step_start: { step: number; retrieved_tools?: string[] };
 }
 
 export interface DoneEvent {
-  type: 'done';
+  type: "done";
   done: true;
   plan_complete?: PlanComplete;
   stopped?: boolean;
 }
 
 export interface ErrorEvent {
-  type: 'error';
+  type: "error";
   error: string;
 }
 
@@ -89,7 +89,16 @@ export interface PlanComplete {
   goal: string;
   steps: PlanStep[];
   results: PlanStepResult[];
-  codes?: Record<number, string | { code: string; language?: string; execution?: Record<string, unknown>; fix_attempts?: number }>;
+  codes?: Record<
+    number,
+    | string
+    | {
+        code: string;
+        language?: string;
+        execution?: Record<string, unknown>;
+        fix_attempts?: number;
+      }
+  >;
 }
 
 // ─── Conversations ───
@@ -240,7 +249,7 @@ export interface UpdatePlanAnalysisRequest {
 export interface PlanStep {
   name: string;
   description: string;
-  status?: 'pending' | 'running' | 'completed' | 'error' | 'stopped';
+  status?: "pending" | "running" | "completed" | "error" | "stopped";
   tool?: string;
 }
 
@@ -265,10 +274,10 @@ export interface ErrorResponse {
 // ─── Frontend-specific ───
 
 export interface ChatMessage {
-  role: 'user' | 'assistant';
+  role: "user" | "assistant";
   content: string;
-  toolCalls?: ToolCallEvent['tool_call'][];
-  toolResults?: ToolResultEvent['tool_result'][];
+  toolCalls?: ToolCallEvent["tool_call"][];
+  toolResults?: ToolResultEvent["tool_result"][];
   currentStep?: number;
   planComplete?: PlanComplete;
   isError?: boolean;
@@ -276,7 +285,11 @@ export interface ChatMessage {
 }
 
 export interface CodeSegment {
+<<<<<<< HEAD
   type: 'thinking' | 'planning' | 'text' | 'code' | 'output' | 'solution';
+=======
+  type: "thinking" | "text" | "code" | "output" | "solution";
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
   content: string;
 }
 
@@ -311,14 +324,14 @@ export interface DetailPanelData {
   currentStep: number;
   retrievedTools?: string[];
   retrievalResult?: CategorizedRetrieval;
-  toolRetrievalStatus?: 'idle' | 'running' | 'done';
+  toolRetrievalStatus?: "idle" | "running" | "done";
   stepExecutions?: Record<number, StepExecution[]>;
 }
 
 export interface PendingFile {
   file: File;
   name: string;
-  type: 'image' | 'audio' | 'document';
+  type: "image" | "audio" | "document";
   previewUrl?: string;
   textContent?: string;
   uploadedFilename?: string;

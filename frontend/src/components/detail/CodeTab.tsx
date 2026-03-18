@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import { useState, useEffect, useMemo } from 'react';
 import { useAppContext } from '@/context/AppContext';
 import { useChatContext } from '@/context/ChatContext';
@@ -7,15 +8,28 @@ import { listStepOutputs, getStepOutputUrl } from '@/api/files';
 import { highlightCodeSyntax } from '@/utils/codeHighlight';
 import { recoverBrokenChars } from '@/utils/textClean';
 import type { CodeData, CodeSegment } from '@/types';
+=======
+import { useState, useEffect, useMemo } from "react";
+import { useAppContext } from "@/context/AppContext";
+import { useChatContext } from "@/context/ChatContext";
+import { useTranslation } from "@/i18n";
+import { executeCode, toolCall } from "@/api/tools";
+import { listStepOutputs, getStepOutputUrl } from "@/api/files";
+import { highlightCodeSyntax } from "@/utils/codeHighlight";
+import { recoverBrokenChars } from "@/utils/textClean";
+import type { CodeData, CodeSegment } from "@/types";
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
 
 /** Strip raw special-token tags that may leak through from model output */
 function stripRawTags(s: string): string {
-  return recoverBrokenChars(s
-    .replace(/(?:<\/?execute>|\[\/?EXECUTE\])/gi, '')
-    .replace(/(?:<\/?observation>|\[\/?OBSERVATION\])/gi, '')
-    .replace(/(?:<\/?think>|\[\/?THINK\])/gi, '')
-    .replace(/(?:<\/?solution>|\[\/?SOLUTION\])/gi, '')
-    .trim());
+  return recoverBrokenChars(
+    s
+      .replace(/(?:<\/?execute>|\[\/?EXECUTE\])/gi, "")
+      .replace(/(?:<\/?observation>|\[\/?OBSERVATION\])/gi, "")
+      .replace(/(?:<\/?think>|\[\/?THINK\])/gi, "")
+      .replace(/(?:<\/?solution>|\[\/?SOLUTION\])/gi, "")
+      .trim(),
+  );
 }
 
 export function CodeTab() {
@@ -25,18 +39,21 @@ export function CodeTab() {
   const data = state.detailPanelData;
   const convId = chatState.conversationId;
 
-  const [selectedStep, setSelectedStep] = useState<'all' | number>('all');
+  const [selectedStep, setSelectedStep] = useState<"all" | number>("all");
   const [regenerating, setRegenerating] = useState(false);
 
   const stepIndices = useMemo(() => {
-    const allIndices = Object.keys(data?.codes || {}).map(Number).sort((a, b) => a - b);
-    return allIndices.filter(idx => {
+    const allIndices = Object.keys(data?.codes || {})
+      .map(Number)
+      .sort((a, b) => a - b);
+    return allIndices.filter((idx) => {
       // Show only steps that were actually executed (have results)
       if (data?.stepExecutions?.[idx]?.length) return true;
       const cd = data?.codes[idx];
-      if (typeof cd === 'object' && cd !== null) {
+      if (typeof cd === "object" && cd !== null) {
         if ((cd as CodeData).execution) return true;
-        if ((cd as CodeData).segments?.some(s => s.type === 'output')) return true;
+        if ((cd as CodeData).segments?.some((s) => s.type === "output"))
+          return true;
       }
       return false;
     });
@@ -45,30 +62,34 @@ export function CodeTab() {
   if (!data || stepIndices.length === 0) {
     return (
       <div className="detail-empty-state">
-        <p>{t('no_code') !== 'no_code' ? t('no_code') : 'No code generated yet.'}</p>
+        <p>
+          {t("no_code") !== "no_code" ? t("no_code") : "No code generated yet."}
+        </p>
       </div>
     );
   }
 
   const handleCopyAll = async () => {
-    const allCode = stepIndices.map(idx => {
-      const cd = data.codes[idx];
-      return typeof cd === 'string' ? cd : cd?.code || '';
-    }).join('\n\n');
+    const allCode = stepIndices
+      .map((idx) => {
+        const cd = data.codes[idx];
+        return typeof cd === "string" ? cd : cd?.code || "";
+      })
+      .join("\n\n");
     await navigator.clipboard.writeText(allCode);
   };
 
   const handleRegenerate = async () => {
-    if (selectedStep === 'all' || selectedStep == null || !convId) return;
+    if (selectedStep === "all" || selectedStep == null || !convId) return;
     const step = data.steps[selectedStep];
     if (!step) return;
     setRegenerating(true);
     try {
       const result = await toolCall({
-        tool_name: 'code_gen',
+        tool_name: "code_gen",
         arguments: {
           task: step.description || step.name,
-          language: 'python',
+          language: "python",
           conv_id: convId,
           step_index: selectedStep,
           force: true,
@@ -77,11 +98,11 @@ export function CodeTab() {
       const res = result?.result as Record<string, unknown> | undefined;
       if (res?.code) {
         appDispatch({
-          type: 'SET_STEP_CODE',
+          type: "SET_STEP_CODE",
           payload: {
             stepIndex: selectedStep,
             code: String(res.code),
-            language: String(res.language || 'python'),
+            language: String(res.language || "python"),
             execution: res.execution as Record<string, unknown> | undefined,
             fixAttempts: (res.fix_attempts as number) || 0,
           },
@@ -97,28 +118,38 @@ export function CodeTab() {
       {/* Step selector: All + per-step buttons */}
       <div className="code-step-selector">
         <button
-          className={`code-step-btn${selectedStep === 'all' ? ' active' : ''}`}
-          onClick={() => setSelectedStep('all')}
+          className={`code-step-btn${selectedStep === "all" ? " active" : ""}`}
+          onClick={() => setSelectedStep("all")}
         >
-          {t('label.all') || 'All'}
+          {t("label.all") || "All"}
         </button>
+<<<<<<< HEAD
         {stepIndices.map(idx => {
           const sName = data.steps[idx]?.name || data.steps[idx]?.tool || '';
+=======
+        {stepIndices.map((idx) => {
+          const sName = data.steps[idx]?.name || data.steps[idx]?.tool || "";
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
           return (
             <button
               key={idx}
-              className={`code-step-btn${selectedStep === idx ? ' active' : ''}`}
+              className={`code-step-btn${selectedStep === idx ? " active" : ""}`}
               onClick={() => setSelectedStep(idx)}
             >
+<<<<<<< HEAD
               Step {idx + 1}{sName ? `: ${sName}` : ''}
+=======
+              Step {idx + 1}
+              {sName ? `: ${sName}` : ""}
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
             </button>
           );
         })}
       </div>
 
       {/* Code blocks */}
-      {selectedStep === 'all' ? (
-        stepIndices.map(idx => (
+      {selectedStep === "all" ? (
+        stepIndices.map((idx) => (
           <CodeBlock key={idx} stepIndex={idx} data={data} convId={convId} />
         ))
       ) : (
@@ -127,13 +158,15 @@ export function CodeTab() {
 
       {/* Bottom actions */}
       <div className="code-actions">
-        <button className="code-copy-btn" onClick={handleCopyAll}>Copy</button>
+        <button className="code-copy-btn" onClick={handleCopyAll}>
+          Copy
+        </button>
         <button
           className="code-regen-btn"
           onClick={handleRegenerate}
-          disabled={selectedStep === 'all' || regenerating}
+          disabled={selectedStep === "all" || regenerating}
         >
-          {regenerating ? 'Regenerating...' : 'Regenerate'}
+          {regenerating ? "Regenerating..." : "Regenerate"}
         </button>
       </div>
     </div>
@@ -144,7 +177,7 @@ export function CodeTab() {
 
 interface CodeBlockProps {
   stepIndex: number;
-  data: import('@/types').DetailPanelData;
+  data: import("@/types").DetailPanelData;
   convId: string | null;
 }
 
@@ -154,18 +187,20 @@ interface CodeGroup {
   output: string;
 }
 
-function groupStepExecs(execs: Array<{ code?: string; observation?: string; success?: boolean }>): CodeGroup[] {
+function groupStepExecs(
+  execs: Array<{ code?: string; observation?: string; success?: boolean }>,
+): CodeGroup[] {
   return execs
-    .filter(e => e.code)
-    .map(e => ({ code: e.code!, output: e.observation || '' }));
+    .filter((e) => e.code)
+    .map((e) => ({ code: e.code!, output: e.observation || "" }));
 }
 
 function groupSegments(segs: CodeSegment[]): CodeGroup[] {
   const groups: CodeGroup[] = [];
   for (const seg of segs) {
-    if (seg.type === 'code') {
-      groups.push({ code: seg.content, output: '' });
-    } else if (seg.type === 'output' && groups.length > 0) {
+    if (seg.type === "code") {
+      groups.push({ code: seg.content, output: "" });
+    } else if (seg.type === "output" && groups.length > 0) {
       groups[groups.length - 1].output = seg.content;
     }
   }
@@ -176,23 +211,49 @@ function CodeBlock({ stepIndex, data, convId }: CodeBlockProps) {
   const { t } = useTranslation();
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [runningIdx, setRunningIdx] = useState<number | null>(null);
-  const [segmentResults, setSegmentResults] = useState<Record<number, Record<string, unknown>>>({});
+  const [segmentResults, setSegmentResults] = useState<
+    Record<number, Record<string, unknown>>
+  >({});
   // Fallback single-block state
   const [copied, setCopied] = useState(false);
   const [running, setRunning] = useState(false);
-  const [execResult, setExecResult] = useState<Record<string, unknown> | null>(null);
+  const [execResult, setExecResult] = useState<Record<string, unknown> | null>(
+    null,
+  );
   const [savedFigures, setSavedFigures] = useState<string[]>([]);
 
   const codeData = data.codes[stepIndex];
+<<<<<<< HEAD
   const code = typeof codeData === 'string' ? codeData : (codeData as CodeData)?.code || '';
   const language = typeof codeData === 'object' && codeData !== null ? (codeData as CodeData).language || 'python' : 'python';
   const execution = typeof codeData === 'object' && codeData !== null ? (codeData as CodeData).execution : undefined;
   const stepName = data.steps[stepIndex]?.name || data.steps[stepIndex]?.tool || '';
   const stepLabel = `Step ${stepIndex + 1}${stepName ? ` : ${stepName}` : ''}`;
   const segments: CodeSegment[] = (typeof codeData === 'object' && codeData !== null ? (codeData as CodeData).segments : undefined) || [];
+=======
+  const code =
+    typeof codeData === "string"
+      ? codeData
+      : (codeData as CodeData)?.code || "";
+  const language =
+    typeof codeData === "object" && codeData !== null
+      ? (codeData as CodeData).language || "python"
+      : "python";
+  const execution =
+    typeof codeData === "object" && codeData !== null
+      ? (codeData as CodeData).execution
+      : undefined;
+  const stepName =
+    data.steps[stepIndex]?.name || data.steps[stepIndex]?.tool || "";
+  const stepLabel = `Step ${stepIndex + 1}${stepName ? ` : ${stepName}` : ""}`;
+  const segments: CodeSegment[] =
+    (typeof codeData === "object" && codeData !== null
+      ? (codeData as CodeData).segments
+      : undefined) || [];
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
   const stepExecs = data.stepExecutions?.[stepIndex] || [];
   const stepStatus = data.steps[stepIndex]?.status;
-  const isRunning = stepStatus === 'running';
+  const isRunning = stepStatus === "running";
 
   // Build code groups from stepExecs (priority 1) or segments (priority 2)
   // Only show groups that were actually executed (have output)
@@ -201,11 +262,13 @@ function CodeBlock({ stepIndex, data, convId }: CodeBlockProps) {
     if (stepExecs.length > 0) {
       groups = groupStepExecs(stepExecs);
     } else {
-      const codeOutputSegs = segments.filter(s => s.type === 'code' || s.type === 'output');
+      const codeOutputSegs = segments.filter(
+        (s) => s.type === "code" || s.type === "output",
+      );
       groups = codeOutputSegs.length > 0 ? groupSegments(codeOutputSegs) : [];
     }
     // Filter to only groups with output (executed code)
-    return groups.filter(g => g.output);
+    return groups.filter((g) => g.output);
   }, [stepExecs, segments]);
 
   const hasGroups = codeGroups.length > 0;
@@ -220,18 +283,32 @@ function CodeBlock({ stepIndex, data, convId }: CodeBlockProps) {
     if (!convId) return;
     let cancelled = false;
     listStepOutputs(convId, stepIndex)
-      .then(r => { if (!cancelled) setSavedFigures(r.figures || []); })
-      .catch(() => { if (!cancelled) setSavedFigures([]); });
-    return () => { cancelled = true; };
+      .then((r) => {
+        if (!cancelled) setSavedFigures(r.figures || []);
+      })
+      .catch(() => {
+        if (!cancelled) setSavedFigures([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [convId, stepIndex]);
 
   const handleRunSegment = async (codeText: string, idx: number) => {
     setRunningIdx(idx);
     try {
-      const result = await executeCode({ code: codeText, language, conv_id: convId || undefined, step_index: stepIndex });
-      setSegmentResults(prev => ({ ...prev, [idx]: result }));
+      const result = await executeCode({
+        code: codeText,
+        language,
+        conv_id: convId || undefined,
+        step_index: stepIndex,
+      });
+      setSegmentResults((prev) => ({ ...prev, [idx]: result }));
     } catch (err) {
-      setSegmentResults(prev => ({ ...prev, [idx]: { success: false, stderr: String(err) } }));
+      setSegmentResults((prev) => ({
+        ...prev,
+        [idx]: { success: false, stderr: String(err) },
+      }));
     } finally {
       setRunningIdx(null);
     }
@@ -248,10 +325,21 @@ function CodeBlock({ stepIndex, data, convId }: CodeBlockProps) {
     setRunning(true);
     setExecResult(null);
     try {
+<<<<<<< HEAD
       const result = await executeCode({ code, language, conv_id: convId || undefined, step_index: stepIndex });
+=======
+      const result = await executeCode({
+        code,
+        language,
+        conv_id: convId || undefined,
+        step_index: stepIndex,
+      });
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
       setExecResult(result);
       if (convId) {
-        const outputs = await listStepOutputs(convId, stepIndex).catch(() => ({ figures: [] }));
+        const outputs = await listStepOutputs(convId, stepIndex).catch(() => ({
+          figures: [],
+        }));
         setSavedFigures((outputs as { figures?: string[] }).figures || []);
       }
     } catch (err) {
@@ -267,9 +355,19 @@ function CodeBlock({ stepIndex, data, convId }: CodeBlockProps) {
     setTimeout(() => setCopied(false), 2000);
   };
 
+<<<<<<< HEAD
   const highlightedHtml = useMemo(() => highlightCodeSyntax(code, language), [code, language]);
+=======
+  const highlightedHtml = useMemo(
+    () => highlightCodeSyntax(code, language),
+    [code, language],
+  );
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
   const execFigures = (execResult?.figures as string[]) || [];
-  const allFigures = [...execFigures, ...savedFigures.filter(f => !execFigures.includes(f))];
+  const allFigures = [
+    ...execFigures,
+    ...savedFigures.filter((f) => !execFigures.includes(f)),
+  ];
 
   return (
     <div className="code-block" data-step={stepIndex}>
@@ -291,30 +389,48 @@ function CodeBlock({ stepIndex, data, convId }: CodeBlockProps) {
                   <span className="code-block-title">{groupTitle}</span>
                   <button
                     className="code-run-btn"
-                    onClick={() => handleRunSegment(stripRawTags(group.code), i)}
+                    onClick={() =>
+                      handleRunSegment(stripRawTags(group.code), i)
+                    }
                     disabled={runningIdx === i}
                   >
-                    {runningIdx === i ? (t('label.running') || 'Running...') : (t('label.run') || 'Run')}
+                    {runningIdx === i
+                      ? t("label.running") || "Running..."
+                      : t("label.run") || "Run"}
                   </button>
                   <button
-                    className={`code-copy-btn${copiedIdx === i ? ' copied' : ''}`}
-                    onClick={() => handleCopySegment(stripRawTags(group.code), i)}
+                    className={`code-copy-btn${copiedIdx === i ? " copied" : ""}`}
+                    onClick={() =>
+                      handleCopySegment(stripRawTags(group.code), i)
+                    }
                   >
-                    {copiedIdx === i ? 'Copied' : 'Copy'}
+                    {copiedIdx === i ? "Copied" : "Copy"}
                   </button>
                 </div>
-                <div className="code-block-body" dangerouslySetInnerHTML={{
-                  __html: highlightCodeSyntax(stripRawTags(group.code), language),
-                }} />
+                <div
+                  className="code-block-body"
+                  dangerouslySetInnerHTML={{
+                    __html: highlightCodeSyntax(
+                      stripRawTags(group.code),
+                      language,
+                    ),
+                  }}
+                />
                 {group.output && (
                   <div className="code-result">
-                    <pre className="code-stdout">{stripRawTags(group.output)}</pre>
+                    <pre className="code-stdout">
+                      {stripRawTags(group.output)}
+                    </pre>
                   </div>
                 )}
                 {segRes && (
-                  <div className="code-result" style={{ display: 'block' }}>
-                    {segRes.stdout && <pre className="code-stdout">{String(segRes.stdout)}</pre>}
-                    {segRes.stderr && <pre className="code-error">{String(segRes.stderr)}</pre>}
+                  <div className="code-result" style={{ display: "block" }}>
+                    {segRes.stdout && (
+                      <pre className="code-stdout">{String(segRes.stdout)}</pre>
+                    )}
+                    {segRes.stderr && (
+                      <pre className="code-error">{String(segRes.stderr)}</pre>
+                    )}
                   </div>
                 )}
               </div>
@@ -329,26 +445,54 @@ function CodeBlock({ stepIndex, data, convId }: CodeBlockProps) {
         <>
           <div className="code-block-header">
             <span className="code-block-title">{stepLabel} : code_1</span>
-            <button className="code-run-btn" onClick={handleRun} disabled={running}>
-              {running ? (t('label.running') || 'Running...') : (t('label.run') || 'Run')}
+            <button
+              className="code-run-btn"
+              onClick={handleRun}
+              disabled={running}
+            >
+              {running
+                ? t("label.running") || "Running..."
+                : t("label.run") || "Run"}
             </button>
-            <button className={`code-copy-btn${copied ? ' copied' : ''}`} onClick={handleCopy}>
-              {copied ? 'Copied' : 'Copy'}
+            <button
+              className={`code-copy-btn${copied ? " copied" : ""}`}
+              onClick={handleCopy}
+            >
+              {copied ? "Copied" : "Copy"}
             </button>
           </div>
-          <div className="code-block-body" dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
+          <div
+            className="code-block-body"
+            dangerouslySetInnerHTML={{ __html: highlightedHtml }}
+          />
         </>
       )}
 
       {/* Execution results (fallback single-block) */}
+<<<<<<< HEAD
       {!hasGroups && <CodeResultSection result={execResult} figures={allFigures} convId={convId} stepIndex={stepIndex} />}
+=======
+      {!hasGroups && (
+        <CodeResultSection
+          result={execResult}
+          figures={allFigures}
+          convId={convId}
+          stepIndex={stepIndex}
+        />
+      )}
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
     </div>
   );
 }
 
 // ─── CodeResultSection ───
 
-function CodeResultSection({ result, figures, convId, stepIndex }: {
+function CodeResultSection({
+  result,
+  figures,
+  convId,
+  stepIndex,
+}: {
   result: Record<string, unknown> | null;
   figures: string[];
   convId: string | null;
@@ -361,10 +505,14 @@ function CodeResultSection({ result, figures, convId, stepIndex }: {
   const hasContent = !!(stdout || stderr?.trim() || figures.length > 0);
 
   return (
-    <div className="code-result" style={{ display: 'block' }}>
+    <div className="code-result" style={{ display: "block" }}>
       {!hasContent && result && (
-        <div className={`code-exec-status ${result.success !== false ? 'success' : 'failure'}`}>
-          {result.success !== false ? 'Execution completed (no output)' : 'Execution failed'}
+        <div
+          className={`code-exec-status ${result.success !== false ? "success" : "failure"}`}
+        >
+          {result.success !== false
+            ? "Execution completed (no output)"
+            : "Execution failed"}
         </div>
       )}
       {result?.success === false && hasContent && (

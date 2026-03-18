@@ -38,7 +38,8 @@ models:
     solution_format: "[SOLUTION]"
     tool_calls_format: "[TOOL_CALLS]...[ARGS]"
     available_tools_format: "[AVAILABLE_TOOLS]"
-    stop_sequences: ["[/EXECUTE]", "[/SOLUTION]", "[/TOOL_RESULTS]", "[/OBSERVATION]"]
+    stop_sequences:
+      ["[/EXECUTE]", "[/SOLUTION]", "[/TOOL_RESULTS]", "[/OBSERVATION]"]
     system_prompt: |
       You are Aigen R0, a helpful biomedical research assistant.
       You follow these instructions in all languages, and always respond to the user in the language they use or request.

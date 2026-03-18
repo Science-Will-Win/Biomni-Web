@@ -1,13 +1,25 @@
-import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from 'react';
-import type { ModelInfo, DetailPanelData, PlanStep, PlanStepResult, CodeData } from '@/types';
+import {
+  createContext,
+  useContext,
+  useReducer,
+  type ReactNode,
+  type Dispatch,
+} from "react";
+import type {
+  ModelInfo,
+  DetailPanelData,
+  PlanStep,
+  PlanStepResult,
+  CodeData,
+} from "@/types";
 
 // ─── Modal Types ───
 
 export type ModalType =
-  | { kind: 'settings' }
-  | { kind: 'system-prompt' }
-  | { kind: 'rename'; convId: string; currentTitle?: string }
-  | { kind: 'stop-confirm'; onConfirm: () => void }
+  | { kind: "settings" }
+  | { kind: "system-prompt" }
+  | { kind: "rename"; convId: string; currentTitle?: string }
+  | { kind: "stop-confirm"; onConfirm: () => void }
   | null;
 
 // ─── State ───
@@ -18,18 +30,18 @@ export interface AppState {
   detailPanelWidth: string | null;
   detailPanelData: DetailPanelData | null;
   currentModel: ModelInfo | null;
-  activeDetailTab: 'plan' | 'graph' | 'code' | 'outputs';
+  activeDetailTab: "plan" | "graph" | "code" | "outputs";
   activeModal: ModalType;
   conversationVersion: number;
 }
 
 const initialState: AppState = {
-  sidebarOpen: localStorage.getItem('sidebarOpen') !== 'false',
-  detailPanelOpen: localStorage.getItem('detailPanelOpen') !== 'false',
-  detailPanelWidth: localStorage.getItem('detailPanelWidth'),
+  sidebarOpen: localStorage.getItem("sidebarOpen") !== "false",
+  detailPanelOpen: localStorage.getItem("detailPanelOpen") !== "false",
+  detailPanelWidth: localStorage.getItem("detailPanelWidth"),
   detailPanelData: null,
   currentModel: null,
-  activeDetailTab: 'plan',
+  activeDetailTab: "plan",
   activeModal: null,
   conversationVersion: 0,
 };
@@ -37,6 +49,7 @@ const initialState: AppState = {
 // ─── Actions ───
 
 export type AppAction =
+<<<<<<< HEAD
   | { type: 'TOGGLE_SIDEBAR' }
   | { type: 'SET_SIDEBAR'; payload: boolean }
   | { type: 'TOGGLE_DETAIL_PANEL' }
@@ -64,46 +77,107 @@ export type AppAction =
   | { type: 'OPEN_MODAL'; payload: ModalType }
   | { type: 'CLOSE_MODAL' }
   | { type: 'BUMP_CONVERSATIONS' };
+=======
+  | { type: "TOGGLE_SIDEBAR" }
+  | { type: "SET_SIDEBAR"; payload: boolean }
+  | { type: "TOGGLE_DETAIL_PANEL" }
+  | { type: "SET_DETAIL_PANEL_OPEN"; payload: boolean }
+  | { type: "SET_DETAIL_PANEL_WIDTH"; payload: string }
+  | { type: "SET_DETAIL_PANEL_DATA"; payload: DetailPanelData }
+  | { type: "CLEAR_DETAIL_PANEL" }
+  | { type: "SET_CURRENT_MODEL"; payload: ModelInfo }
+  | { type: "SET_ACTIVE_DETAIL_TAB"; payload: AppState["activeDetailTab"] }
+  | {
+      type: "UPDATE_STEP_STATUS";
+      payload: { stepIndex: number; status: PlanStep["status"] };
+    }
+  | { type: "ADD_STEP_RESULT"; payload: PlanStepResult }
+  | {
+      type: "SET_STEP_CODE";
+      payload: {
+        stepIndex: number;
+        code: string;
+        language?: string;
+        execution?: Record<string, unknown>;
+        fixAttempts?: number;
+        segments?: import("../types").CodeSegment[];
+      };
+    }
+  | { type: "SET_ANALYSIS"; payload: string }
+  | { type: "SET_CURRENT_STEP"; payload: number }
+  | {
+      type: "UPDATE_STEP_TOOL";
+      payload: { stepIndex: number; toolName: string };
+    }
+  | { type: "RESET_STEP_RESULTS" }
+  | { type: "MARK_RUNNING_STEPS_ERROR" }
+  | { type: "MARK_RUNNING_STEPS_STOPPED" }
+  | { type: "COMPLETE_PREVIOUS_RUNNING_STEPS"; payload: number }
+  | { type: "UPDATE_STEP_NAME"; payload: { stepIndex: number; name: string } }
+  | { type: "SET_RETRIEVED_TOOLS"; payload: string[] }
+  | {
+      type: "SET_RETRIEVAL_RESULT";
+      payload: import("../types").CategorizedRetrieval;
+    }
+  | { type: "SET_TOOL_RETRIEVAL_STATUS"; payload: "idle" | "running" | "done" }
+  | {
+      type: "ADD_STEP_EXECUTION";
+      payload: {
+        stepIndex: number;
+        code: string;
+        observation: string;
+        success: boolean;
+        iteration: number;
+      };
+    }
+  | { type: "OPEN_MODAL"; payload: ModalType }
+  | { type: "CLOSE_MODAL" }
+  | { type: "BUMP_CONVERSATIONS" };
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
 
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
-    case 'TOGGLE_SIDEBAR': {
+    case "TOGGLE_SIDEBAR": {
       const next = !state.sidebarOpen;
-      localStorage.setItem('sidebarOpen', String(next));
+      localStorage.setItem("sidebarOpen", String(next));
       return { ...state, sidebarOpen: next };
     }
 
-    case 'SET_SIDEBAR':
-      localStorage.setItem('sidebarOpen', String(action.payload));
+    case "SET_SIDEBAR":
+      localStorage.setItem("sidebarOpen", String(action.payload));
       return { ...state, sidebarOpen: action.payload };
 
-    case 'TOGGLE_DETAIL_PANEL': {
+    case "TOGGLE_DETAIL_PANEL": {
       const nextOpen = !state.detailPanelOpen;
-      localStorage.setItem('detailPanelOpen', String(nextOpen));
+      localStorage.setItem("detailPanelOpen", String(nextOpen));
       return { ...state, detailPanelOpen: nextOpen };
     }
 
-    case 'SET_DETAIL_PANEL_OPEN':
-      localStorage.setItem('detailPanelOpen', String(action.payload));
+    case "SET_DETAIL_PANEL_OPEN":
+      localStorage.setItem("detailPanelOpen", String(action.payload));
       return { ...state, detailPanelOpen: action.payload };
 
-    case 'SET_DETAIL_PANEL_WIDTH':
-      localStorage.setItem('detailPanelWidth', action.payload);
+    case "SET_DETAIL_PANEL_WIDTH":
+      localStorage.setItem("detailPanelWidth", action.payload);
       return { ...state, detailPanelWidth: action.payload };
 
-    case 'SET_DETAIL_PANEL_DATA':
-      return { ...state, detailPanelData: action.payload, detailPanelOpen: true };
+    case "SET_DETAIL_PANEL_DATA":
+      return {
+        ...state,
+        detailPanelData: action.payload,
+        detailPanelOpen: true,
+      };
 
-    case 'CLEAR_DETAIL_PANEL':
+    case "CLEAR_DETAIL_PANEL":
       return { ...state, detailPanelData: null };
 
-    case 'SET_CURRENT_MODEL':
+    case "SET_CURRENT_MODEL":
       return { ...state, currentModel: action.payload };
 
-    case 'SET_ACTIVE_DETAIL_TAB':
+    case "SET_ACTIVE_DETAIL_TAB":
       return { ...state, activeDetailTab: action.payload };
 
-    case 'UPDATE_STEP_STATUS': {
+    case "UPDATE_STEP_STATUS": {
       if (!state.detailPanelData) return state;
       const steps = [...state.detailPanelData.steps];
       if (steps[action.payload.stepIndex]) {
@@ -118,7 +192,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case 'ADD_STEP_RESULT': {
+    case "ADD_STEP_RESULT": {
       if (!state.detailPanelData) return state;
       return {
         ...state,
@@ -129,11 +203,25 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case 'SET_STEP_CODE': {
+    case "SET_STEP_CODE": {
       if (!state.detailPanelData) return state;
+<<<<<<< HEAD
       const { stepIndex, code, language, execution, fixAttempts, segments } = action.payload;
       const value: string | CodeData = language
         ? { code, language, execution, fixAttempts: fixAttempts || 0, stepIndex, ...(segments ? { segments } : {}) }
+=======
+      const { stepIndex, code, language, execution, fixAttempts, segments } =
+        action.payload;
+      const value: string | CodeData = language
+        ? {
+            code,
+            language,
+            execution,
+            fixAttempts: fixAttempts || 0,
+            stepIndex,
+            ...(segments ? { segments } : {}),
+          }
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
         : code;
       return {
         ...state,
@@ -147,7 +235,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case 'SET_ANALYSIS': {
+    case "SET_ANALYSIS": {
       if (!state.detailPanelData) return state;
       return {
         ...state,
@@ -155,15 +243,18 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case 'SET_CURRENT_STEP': {
+    case "SET_CURRENT_STEP": {
       if (!state.detailPanelData) return state;
       return {
         ...state,
-        detailPanelData: { ...state.detailPanelData, currentStep: action.payload },
+        detailPanelData: {
+          ...state.detailPanelData,
+          currentStep: action.payload,
+        },
       };
     }
 
-    case 'UPDATE_STEP_TOOL': {
+    case "UPDATE_STEP_TOOL": {
       if (!state.detailPanelData) return state;
       const steps = [...state.detailPanelData.steps];
       if (steps[action.payload.stepIndex]) {
@@ -178,59 +269,67 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case 'RESET_STEP_RESULTS': {
+    case "RESET_STEP_RESULTS": {
       if (!state.detailPanelData) return state;
       return {
         ...state,
         detailPanelData: {
           ...state.detailPanelData,
-          steps: state.detailPanelData.steps.map(s => ({
+          steps: state.detailPanelData.steps.map((s) => ({
             ...s,
-            status: 'pending' as const,
+            status: "pending" as const,
             tool: undefined,
           })),
           results: [],
           codes: {},
-          analysis: '',
+          analysis: "",
           currentStep: 0,
         },
       };
     }
 
-    case 'MARK_RUNNING_STEPS_ERROR': {
+    case "MARK_RUNNING_STEPS_ERROR": {
       if (!state.detailPanelData) return state;
       return {
         ...state,
         detailPanelData: {
           ...state.detailPanelData,
-          steps: state.detailPanelData.steps.map(s =>
-            s.status === 'running' ? { ...s, status: 'error' as const } : s
+          steps: state.detailPanelData.steps.map((s) =>
+            s.status === "running" ? { ...s, status: "error" as const } : s,
           ),
         },
       };
     }
 
+<<<<<<< HEAD
     case 'MARK_RUNNING_STEPS_STOPPED': {
+=======
+    case "MARK_RUNNING_STEPS_STOPPED": {
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
       if (!state.detailPanelData) return state;
       return {
         ...state,
         detailPanelData: {
           ...state.detailPanelData,
-          toolRetrievalStatus: 'idle',
-          steps: state.detailPanelData.steps.map(s =>
-            s.status === 'running' ? { ...s, status: 'stopped' as const } : s
+          toolRetrievalStatus: "idle",
+          steps: state.detailPanelData.steps.map((s) =>
+            s.status === "running" ? { ...s, status: "stopped" as const } : s,
           ),
         },
       };
     }
 
+<<<<<<< HEAD
     case 'COMPLETE_PREVIOUS_RUNNING_STEPS': {
+=======
+    case "COMPLETE_PREVIOUS_RUNNING_STEPS": {
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
       if (!state.detailPanelData) return state;
       const cutoff = action.payload; // 0-indexed: all steps before this index
       const steps = state.detailPanelData.steps.map((s, i) =>
-        i < cutoff && s.status === 'running'
-          ? { ...s, status: 'completed' as const }
-          : s
+        i < cutoff && s.status === "running"
+          ? { ...s, status: "completed" as const }
+          : s,
       );
       return {
         ...state,
@@ -238,24 +337,34 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+<<<<<<< HEAD
     case 'UPDATE_STEP_NAME': {
+=======
+    case "UPDATE_STEP_NAME": {
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
       if (!state.detailPanelData) return state;
       const steps = [...state.detailPanelData.steps];
       if (steps[action.payload.stepIndex]) {
-        steps[action.payload.stepIndex] = { ...steps[action.payload.stepIndex], name: action.payload.name };
+        steps[action.payload.stepIndex] = {
+          ...steps[action.payload.stepIndex],
+          name: action.payload.name,
+        };
       }
       return { ...state, detailPanelData: { ...state.detailPanelData, steps } };
     }
 
-    case 'SET_RETRIEVED_TOOLS': {
+    case "SET_RETRIEVED_TOOLS": {
       if (!state.detailPanelData) return state;
       return {
         ...state,
-        detailPanelData: { ...state.detailPanelData, retrievedTools: action.payload },
+        detailPanelData: {
+          ...state.detailPanelData,
+          retrievedTools: action.payload,
+        },
       };
     }
 
-    case 'SET_RETRIEVAL_RESULT': {
+    case "SET_RETRIEVAL_RESULT": {
       if (!state.detailPanelData) return state;
       return {
         ...state,
@@ -267,9 +376,14 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case 'SET_TOOL_RETRIEVAL_STATUS': {
+    case "SET_TOOL_RETRIEVAL_STATUS": {
       const base = state.detailPanelData ?? {
-        goal: '', steps: [], results: [], codes: {}, analysis: '', currentStep: 0,
+        goal: "",
+        steps: [],
+        results: [],
+        codes: {},
+        analysis: "",
+        currentStep: 0,
       };
       return {
         ...state,
@@ -277,11 +391,15 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case 'ADD_STEP_EXECUTION': {
+    case "ADD_STEP_EXECUTION": {
       if (!state.detailPanelData) return state;
-      const { stepIndex, code, observation, success, iteration } = action.payload;
+      const { stepIndex, code, observation, success, iteration } =
+        action.payload;
       const prev = state.detailPanelData.stepExecutions || {};
-      const stepExecs = [...(prev[stepIndex] || []), { code, observation, success, iteration }];
+      const stepExecs = [
+        ...(prev[stepIndex] || []),
+        { code, observation, success, iteration },
+      ];
       return {
         ...state,
         detailPanelData: {
@@ -291,13 +409,17 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+<<<<<<< HEAD
     case 'OPEN_MODAL':
+=======
+    case "OPEN_MODAL":
+>>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
       return { ...state, activeModal: action.payload };
 
-    case 'CLOSE_MODAL':
+    case "CLOSE_MODAL":
       return { ...state, activeModal: null };
 
-    case 'BUMP_CONVERSATIONS':
+    case "BUMP_CONVERSATIONS":
       return { ...state, conversationVersion: state.conversationVersion + 1 };
 
     default:
@@ -325,6 +447,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 export function useAppContext() {
   const ctx = useContext(AppContext);
-  if (!ctx) throw new Error('useAppContext must be used within AppProvider');
+  if (!ctx) throw new Error("useAppContext must be used within AppProvider");
   return ctx;
 }

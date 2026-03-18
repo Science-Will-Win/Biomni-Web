@@ -10,6 +10,7 @@ from uuid import UUID
 
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langgraph.errors import GraphRecursionError
+from langfuse.decorators import observe, langfuse_context
 
 from sqlalchemy import select
 
@@ -712,44 +713,30 @@ class ChatHandler:
                     }
                     logger.info("Patched A1 LLM with vLLM extra_body (skip_special_tokens)")
 
-            # Patch run_python_repl at module level in biomni.agent.a1.
-            # Instance-level monkey-patch on _traced_run_code fails because
-            # the @observe (langfuse) decorator prevents instance attribute
-            # shadowing. Instead, we patch the module-global run_python_repl
-            # which _traced_run_code looks up at call time.
-            if self._import_mapping:
-                try:
-                    import biomni.agent.a1 as _a1_module
-                    if not getattr(_a1_module, '_repl_import_patched', False):
-                        _original_repl = _a1_module.run_python_repl
-                        mapping = self._import_mapping
+            # Patch _traced_run_code to fix biomni imports before execution.
+            # Module-level monkey-patch doesn't work because a1.py binds
+            # run_python_repl via 'from ... import' (value copy, not reference).
+            if self._import_mapping and not getattr(agent, '_import_patched', False):
+                original_run = agent._traced_run_code
+                mapping = self._import_mapping
+                @observe(as_type="span", name="run_sandbox_code")
+                def _patched_traced_run(code: str, timeout: int):
+                    # Langfuse에 입력 코드 기록
+                    langfuse_context.update_current_observation(input={"code": code, "timeout": timeout})
 
-                        def _patched_repl(code):
-                            fixed, corrections = _fix_biomni_imports(code, mapping)
-                            if corrections:
-                                logger.info(f"Import auto-fix (repl): {corrections}")
-
-                            # Warn about unknown functions
-                            import_funcs = re.findall(r'from biomni\S+ import (\w+)', fixed)
-                            unknown = [f for f in import_funcs if f not in mapping]
-
-                            result = _original_repl(fixed)
-
-                            prefix = ""
-                            if corrections:
-                                prefix += "[AUTO-FIX] Imports were automatically corrected.\n"
-                            if unknown:
-                                prefix += f"[WARNING] Functions {unknown} do NOT exist. Use ONLY functions from the Function Dictionary.\n"
-                            if prefix:
-                                result = prefix + result
-
-                            return result
-
-                        _a1_module.run_python_repl = _patched_repl
-                        _a1_module._repl_import_patched = True
-                        logger.info("Import fixer applied at module level (biomni.agent.a1.run_python_repl)")
-                except ImportError:
-                    logger.warning("Could not import biomni.agent.a1 for import fixer patch")
+                    fixed, corrections = _fix_biomni_imports(code, mapping)
+                    if corrections:
+                        logger.info(f"Import auto-fix: {corrections}")
+                
+                    # 실제 코드 실행
+                    result = original_run(fixed, timeout)
+                
+                    # Langfuse에 실행 결과 기록
+                    langfuse_context.update_current_observation(output={"result": result})
+                    return result
+                agent._traced_run_code = _patched_traced_run
+                agent._import_patched = True
+                logger.info("Import fixer applied to A1 agent instance")
 
             self._active_agents[session_id] = agent
             logger.info(f"Initialized Original A1 Agent for session {session_id} with model {model_name}")
@@ -817,6 +804,8 @@ class ChatHandler:
         plan_data = None
         full_response = ""
 
+        lf_handler = langfuse_context.get_current_langchain_handler()
+
         for attempt in range(MAX_RETRIES + 1):
             if self._stop_flags.get(conv_id):
                 return
@@ -855,7 +844,7 @@ class ChatHandler:
             chunk_count = 0
             plan_data = None
             try:
-                async for chunk in plan_llm.astream(plan_messages):
+                async for chunk in plan_llm.astream(plan_messages, config={"callbacks": [lf_handler]}):
                     chunk_count += 1
                     if self._stop_flags.get(conv_id):
                         return
@@ -1172,6 +1161,9 @@ class ChatHandler:
             step_context = self._build_step_context(step, step_idx, plan_state["all_results"],
                                                      total_steps=total_steps, all_steps=steps,
                                                      behavior=behavior)
+            # [수정된 부분] Langfuse 현재 Trace 핸들러를 LangGraph config에 주입
+            lf_handler = langfuse_context.get_current_langchain_handler()
+            
             inputs = {
                 "messages": [_strip_think_from_message(m) for m in history] + [HumanMessage(content=step_context)],
                 "next_step": None,
@@ -1181,6 +1173,7 @@ class ChatHandler:
             config = {
                 "recursion_limit": 100,
                 "configurable": {"thread_id": f"{conv_id}_step_{step_idx}"},
+                "callbacks": [lf_handler], # 여기에 핸들러 추가
             }
 
             # ── Stream A1 events (with retry on recursion limit) ──
@@ -1858,7 +1851,7 @@ class ChatHandler:
         return response.content if response.content else ""
 
     # ─── Main Chat Handler ───
-
+    @observe()
     async def handle_chat(self, request: ChatRequest, db) -> AsyncGenerator[ChatEvent, None]:
         """메인 채팅 핸들러.
 
@@ -1867,6 +1860,13 @@ class ChatHandler:
         """
         conv_svc = ConversationService(db)
         conv_id = request.conv_id or str((await conv_svc.create_conversation(first_message=request.message)).id)
+
+        langfuse_context.update_current_trace(
+            session_id=conv_id, 
+            name="Biomni_Chat_Session",
+            input=request.message
+        )
+
         self._stop_flags[conv_id] = False
 
         try:

@@ -1,11 +1,11 @@
-import { useState, useCallback } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { useAppContext } from '@/context/AppContext';
-import { analyzePlan } from '@/api/plan';
-import { useTranslation } from '@/i18n';
-import { recoverBrokenChars } from '@/utils/textClean';
-import { RefreshCw, Loader, AlertCircle } from 'lucide-react';
+import { useState, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { useAppContext } from "@/context/AppContext";
+import { analyzePlan } from "@/api/plan";
+import { useTranslation } from "@/i18n";
+import { recoverBrokenChars } from "@/utils/textClean";
+import { RefreshCw, Loader, AlertCircle } from "lucide-react";
 
 export function PlanTab() {
   const { state, dispatch: appDispatch } = useAppContext();
@@ -13,31 +13,39 @@ export function PlanTab() {
   const data = state.detailPanelData;
 
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
 
   // Detect plan completion: all steps have a terminal status
   const allStepsDone = data
     ? data.steps.length > 0 &&
       data.steps.every(
-        (s) => s.status === 'completed' || s.status === 'error' || s.status === 'stopped',
+        (s) =>
+          s.status === "completed" ||
+          s.status === "error" ||
+          s.status === "stopped",
       )
     : false;
 
   const requestAnalysis = useCallback(
     async (force = false) => {
-      console.log('[PlanTab] requestAnalysis called', { force, hasData: !!data, hasAnalysis: !!data?.analysis, allStepsDone });
+      console.log("[PlanTab] requestAnalysis called", {
+        force,
+        hasData: !!data,
+        hasAnalysis: !!data?.analysis,
+        allStepsDone,
+      });
       if (!data || (!force && data.analysis)) return;
       if (!allStepsDone && !force) return;
 
-      console.log('[PlanTab] Starting analysis request...');
+      console.log("[PlanTab] Starting analysis request...");
       setLoading(true);
-      setError('');
+      setError("");
       try {
         const stepsWithResults = data.steps.map((step, i) => ({
           name: step.name,
-          tool: step.tool || '',
-          description: step.description || '',
-          status: step.status || 'pending',
+          tool: step.tool || "",
+          description: step.description || "",
+          status: step.status || "pending",
           result: data.results[i] || null,
         }));
 
@@ -47,11 +55,15 @@ export function PlanTab() {
           current_step: data.currentStep,
         });
 
-        console.log('[PlanTab] analyzePlan response:', { success: res.success, analysisLen: res.analysis?.length, error: res.error });
+        console.log("[PlanTab] analyzePlan response:", {
+          success: res.success,
+          analysisLen: res.analysis?.length,
+          error: res.error,
+        });
         if (res.success && res.analysis) {
-          appDispatch({ type: 'SET_ANALYSIS', payload: res.analysis });
+          appDispatch({ type: "SET_ANALYSIS", payload: res.analysis });
         } else {
-          setError(res.error || 'Analysis generation failed');
+          setError(res.error || "Analysis generation failed");
         }
       } catch (err) {
         setError(String(err));
@@ -69,7 +81,7 @@ export function PlanTab() {
   if (!data) {
     return (
       <div className="detail-empty-state">
-        <p>{t('empty.plan_hint')}</p>
+        <p>{t("empty.plan_hint")}</p>
       </div>
     );
   }
@@ -78,9 +90,11 @@ export function PlanTab() {
   if (!allStepsDone && !data.analysis) {
     return (
       <div className="detail-empty-state">
-        <p>{t('status.plan_running') !== 'status.plan_running'
-          ? t('status.plan_running')
-          : 'Plan is running. Analysis will appear here when all steps complete.'}</p>
+        <p>
+          {t("status.plan_running") !== "status.plan_running"
+            ? t("status.plan_running")
+            : "Plan is running. Analysis will appear here when all steps complete."}
+        </p>
       </div>
     );
   }
@@ -90,9 +104,11 @@ export function PlanTab() {
     return (
       <div className="detail-empty-state">
         <Loader size={20} className="spin" style={{ marginBottom: 8 }} />
-        <p>{t('status.analyzing') !== 'status.analyzing'
-          ? t('status.analyzing')
-          : 'Generating analysis...'}</p>
+        <p>
+          {t("status.analyzing") !== "status.analyzing"
+            ? t("status.analyzing")
+            : "Generating analysis..."}
+        </p>
       </div>
     );
   }
@@ -129,9 +145,11 @@ export function PlanTab() {
           disabled={loading}
         >
           <RefreshCw size={14} />
-          <span>{t('label.regenerate_analysis') !== 'label.regenerate_analysis'
-            ? t('label.regenerate_analysis')
-            : 'Regenerate Analysis'}</span>
+          <span>
+            {t("label.regenerate_analysis") !== "label.regenerate_analysis"
+              ? t("label.regenerate_analysis")
+              : "Regenerate Analysis"}
+          </span>
         </button>
       )}
 
@@ -143,9 +161,11 @@ export function PlanTab() {
           disabled={loading}
         >
           <RefreshCw size={14} />
-          <span>{t('label.regenerate_analysis') !== 'label.regenerate_analysis'
-            ? t('label.regenerate_analysis')
-            : 'Regenerate Analysis'}</span>
+          <span>
+            {t("label.regenerate_analysis") !== "label.regenerate_analysis"
+              ? t("label.regenerate_analysis")
+              : "Regenerate Analysis"}
+          </span>
         </button>
       )}
     </div>

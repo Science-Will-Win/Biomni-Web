@@ -319,14 +319,9 @@ Goal: Identify candidate genes associated with a rare cardiac disorder
 
 # EXAMPLE 3 (data analysis workflow, for reference only)
 
-Goal: Analyze differential gene expression between treatment and control groups
-1. [ ] Data retrieval: Download the relevant expression dataset from the data lake and load it into a dataframe
-2. [ ] Quality control: Perform data cleaning, normalization, and exploratory analysis to ensure data integrity
-3. [ ] Statistical testing: Apply appropriate statistical tests to identify differentially expressed genes between groups
-4. [ ] Functional enrichment: Run gene ontology and pathway enrichment analysis on the significant gene set
-5. [ ] Visualization: Generate volcano plots, heatmaps, and pathway diagrams to summarize the results
-
-"""
+After your {think_fmt} block, output ONLY the plan in the exact format above.
+Each step MUST be: "number. [ ] Short Name: Detailed description"
+Do not include any additional explanation, rationale, or commentary outside the plan."""
 
 
 # Legacy constant (regenerated with default think tags)

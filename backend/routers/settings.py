@@ -206,7 +206,12 @@ async def get_composed_prompts(db: AsyncSession = Depends(get_db)):
             "sections": sections,
             "custom": model_stored.get(key, ""),
         }
-    # Tool retrieval prompt — 3-part split: editable_top / readonly_middle / editable_bottom
+    # Tool retrieval prompt (with placeholders for variable parts)
+    default_instruction = (
+        "You are an expert biomedical research assistant. Your task is to select "
+        "the relevant resources to help answer a user's query. Also, when using tools, "
+        "make sure to explain the reasons for using these tools and explain it concisely and rigorously."
+    )
     if biomni_loader.is_initialized():
         retrieval_prompt = biomni_loader.build_retrieval_prompt(
             user_query="{user_query}",

@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback } from "react";
 
 /**
  * Smart scroll hook: auto-scrolls during streaming,
@@ -40,7 +40,8 @@ export function useSmartScroll(isStreaming: boolean) {
 
     const handleScroll = () => {
       const threshold = 150;
-      const isNear = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+      const isNear =
+        el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
       const scrollable = el.scrollHeight > el.clientHeight + 10;
       setNearBottom(isNear);
       setIsScrollable(scrollable);
@@ -61,11 +62,11 @@ export function useSmartScroll(isStreaming: boolean) {
       }
     };
 
-    el.addEventListener('scroll', handleScroll, { passive: true });
-    el.addEventListener('wheel', handleWheel, { passive: true });
+    el.addEventListener("scroll", handleScroll, { passive: true });
+    el.addEventListener("wheel", handleWheel, { passive: true });
     return () => {
-      el.removeEventListener('scroll', handleScroll);
-      el.removeEventListener('wheel', handleWheel);
+      el.removeEventListener("scroll", handleScroll);
+      el.removeEventListener("wheel", handleWheel);
     };
   }, [isStreaming]);
 
@@ -78,7 +79,10 @@ export function useSmartScroll(isStreaming: boolean) {
     ro.observe(el);
     const mo = new MutationObserver(recomputeScroll);
     mo.observe(el, { childList: true, subtree: true });
-    return () => { ro.disconnect(); mo.disconnect(); };
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+    };
   }, [recomputeScroll]);
 
   // Auto-scroll during streaming

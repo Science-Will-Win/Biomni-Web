@@ -12,6 +12,7 @@ import logging
 import os
 import re
 from typing import Any, Dict, List, Optional, TypedDict
+from langfuse.decorators import observe
 
 logger = logging.getLogger("aigen.biomni_tools")
 
@@ -372,42 +373,7 @@ class BiomniToolLoader:
                     indices.append(idx)
         return [items[i] for i in indices[:max_count]]
 
-    @staticmethod
-    def _extract_indices_flexible(
-        content: str, category: str, next_categories: List[str], max_idx: int
-    ) -> List[int]:
-        """Extract indices for a category from free-form LLM output.
-
-        Finds the region between `category` keyword and the next category keyword,
-        then extracts all integers from that region.
-        """
-        # Build pattern to find category header (flexible: **TOOLS**, TOOLS:, TOOLS -, etc.)
-        cat_pattern = re.compile(
-            rf"\*?\*?{category}\*?\*?\s*[-:]\s*", re.IGNORECASE
-        )
-        cat_match = cat_pattern.search(content)
-        if not cat_match:
-            return []
-
-        start = cat_match.end()
-
-        # Find where next category starts (or end of content)
-        end = len(content)
-        for nc in next_categories:
-            nc_pattern = re.compile(rf"\*?\*?{nc}\*?\*?\s*[-:]", re.IGNORECASE)
-            nc_match = nc_pattern.search(content, start)
-            if nc_match and nc_match.start() < end:
-                end = nc_match.start()
-
-        region = content[start:end]
-        # Extract all integers from the region
-        indices = []
-        for num_str in re.findall(r"\d+", region):
-            idx = int(num_str)
-            if 0 <= idx < max_idx and idx not in indices:
-                indices.append(idx)
-        return indices
-
+    @observe(as_type="span", name="tool_retrieval_with_llm")
     async def retrieval_with_llm(
         self, query: str, llm: Any, max_tools: int = 15,
         plan_context: str = "",
@@ -420,6 +386,8 @@ class BiomniToolLoader:
         Parses TOOLS, DATA_LAKE, and LIBRARIES indices from LLM response.
         Falls back to keyword_search on failure.
         """
+        langfuse_context.update_current_span(input={"query": query, "plan_context": plan_context})
+
         from langchain_core.messages import HumanMessage
 
         data_lake_items = data_lake_items or []
@@ -469,12 +437,19 @@ class BiomniToolLoader:
                     f"{len(selected_libraries)} libraries, "
                     f"{len(selected_know_how)} know_how"
                 )
-                return RetrievalResult(
+                
+                result = RetrievalResult(
                     tools=selected_tools,
                     data_lake=selected_data_lake,
                     libraries=selected_libraries,
                     know_how=selected_know_how,
                 )
+                # Langfuse에 반환된 도구 개수 등 메타데이터 기록
+                langfuse_context.update_current_span(output={
+                    "tools_count": len(selected_tools),
+                    "data_lake_count": len(selected_data_lake)
+                })
+                return result
 
             # --- Strategy 2: Flexible extraction from free-form output ---
             categories = ["TOOLS", "DATA_LAKE", "LIBRARIES", "KNOW_HOW"]

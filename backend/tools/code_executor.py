@@ -15,6 +15,7 @@ import tempfile
 from dataclasses import dataclass, field
 
 from config import get_settings
+from langfuse.decorators import observe, langfuse_context
 
 logger = logging.getLogger("aigen.code_executor")
 
@@ -36,13 +37,22 @@ class CodeExecutor:
     def __init__(self) -> None:
         self._settings = get_settings()
 
+    @observe(as_type="span", name="sandbox_subprocess_execute")
     async def execute(
         self, code: str, language: str, conv_id: str, step_id: str
     ) -> CodeExecutionResult:
-        """Async wrapper — delegates to _execute_sync via thread."""
-        return await asyncio.to_thread(
+        langfuse_context.update_current_span(
+            input={"language": language, "code": code, "conv_id": conv_id, "step_id": step_id}
+        )
+        
+        res = await asyncio.to_thread(
             self._execute_sync, code, language, conv_id, step_id
         )
+        
+        langfuse_context.update_current_span(
+            output={"success": res.success, "stdout": res.stdout, "stderr": res.stderr}
+        )
+        return res
 
     # ------------------------------------------------------------------
     # Sync execution (runs in thread pool)
