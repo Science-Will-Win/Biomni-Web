@@ -18,6 +18,7 @@ RUN conda install -y -c conda-forge -c bioconda \
     python=3.11 \
     blast samtools bowtie2 bwa bedtools fastqc trimmomatic \
     mafft gseapy mageck plannotate \
+    fasttree \
     && conda clean -afy
 
 COPY requirements.txt .
@@ -33,11 +34,11 @@ RUN pip install --no-cache-dir "git+https://github.com/YosefLab/popV.git@refs/pu
 RUN Rscript -e "install.packages(c('ggplot2', 'lme4', 'dplyr', 'tidyr', 'readr', 'stringr', 'Matrix', 'Rcpp', 'devtools', 'remotes', 'harmony', 'WGCNA', 'BiocManager'), repos='https://cran.rstudio.com/')" \
     && Rscript -e "BiocManager::install(c('DESeq2', 'dada2', 'xcms', 'flowCore', 'edgeR', 'limma', 'clusterProfiler', 'impute', 'preprocessCore', 'GO.db', 'AnnotationDbi'), ask=FALSE)"
 
-RUN mkdir -p /app/biomni_tools/bin \
-    && wget -O /app/biomni_tools/FastTree.c http://www.microbesonline.org/fasttree/FastTree.c \
-    && gcc -O3 -finline-functions -funroll-loops -Wall -o /app/biomni_tools/bin/FastTree /app/biomni_tools/FastTree.c -lm \
-    && rm -f /app/biomni_tools/FastTree.c
-ENV PATH="/app/biomni_tools/bin:${PATH}"
+# RUN mkdir -p /app/biomni_tools/bin \
+#     && wget -O /app/biomni_tools/FastTree.c http://www.microbesonline.org/fasttree/FastTree.c \
+#     && gcc -O3 -finline-functions -funroll-loops -Wall -o /app/biomni_tools/bin/FastTree /app/biomni_tools/FastTree.c -lm \
+#     && rm -f /app/biomni_tools/FastTree.c
+# ENV PATH="/app/biomni_tools/bin:${PATH}"
 
 # [핵심 수정 1] Biomni 레포지토리를 도커 이미지 내부로 직접 클론
 RUN git clone https://github.com/Science-Will-Win/Biomni.git /app/biomni_repo

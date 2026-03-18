@@ -1,14 +1,3 @@
-<<<<<<< HEAD
-import { useState, useEffect, useMemo } from 'react';
-import { useAppContext } from '@/context/AppContext';
-import { useChatContext } from '@/context/ChatContext';
-import { useTranslation } from '@/i18n';
-import { executeCode, toolCall } from '@/api/tools';
-import { listStepOutputs, getStepOutputUrl } from '@/api/files';
-import { highlightCodeSyntax } from '@/utils/codeHighlight';
-import { recoverBrokenChars } from '@/utils/textClean';
-import type { CodeData, CodeSegment } from '@/types';
-=======
 import { useState, useEffect, useMemo } from "react";
 import { useAppContext } from "@/context/AppContext";
 import { useChatContext } from "@/context/ChatContext";
@@ -18,7 +7,6 @@ import { listStepOutputs, getStepOutputUrl } from "@/api/files";
 import { highlightCodeSyntax } from "@/utils/codeHighlight";
 import { recoverBrokenChars } from "@/utils/textClean";
 import type { CodeData, CodeSegment } from "@/types";
->>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
 
 /** Strip raw special-token tags that may leak through from model output */
 function stripRawTags(s: string): string {
@@ -123,25 +111,16 @@ export function CodeTab() {
         >
           {t("label.all") || "All"}
         </button>
-<<<<<<< HEAD
-        {stepIndices.map(idx => {
-          const sName = data.steps[idx]?.name || data.steps[idx]?.tool || '';
-=======
         {stepIndices.map((idx) => {
           const sName = data.steps[idx]?.name || data.steps[idx]?.tool || "";
->>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
           return (
             <button
               key={idx}
               className={`code-step-btn${selectedStep === idx ? " active" : ""}`}
               onClick={() => setSelectedStep(idx)}
             >
-<<<<<<< HEAD
-              Step {idx + 1}{sName ? `: ${sName}` : ''}
-=======
               Step {idx + 1}
               {sName ? `: ${sName}` : ""}
->>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
             </button>
           );
         })}
@@ -223,14 +202,6 @@ function CodeBlock({ stepIndex, data, convId }: CodeBlockProps) {
   const [savedFigures, setSavedFigures] = useState<string[]>([]);
 
   const codeData = data.codes[stepIndex];
-<<<<<<< HEAD
-  const code = typeof codeData === 'string' ? codeData : (codeData as CodeData)?.code || '';
-  const language = typeof codeData === 'object' && codeData !== null ? (codeData as CodeData).language || 'python' : 'python';
-  const execution = typeof codeData === 'object' && codeData !== null ? (codeData as CodeData).execution : undefined;
-  const stepName = data.steps[stepIndex]?.name || data.steps[stepIndex]?.tool || '';
-  const stepLabel = `Step ${stepIndex + 1}${stepName ? ` : ${stepName}` : ''}`;
-  const segments: CodeSegment[] = (typeof codeData === 'object' && codeData !== null ? (codeData as CodeData).segments : undefined) || [];
-=======
   const code =
     typeof codeData === "string"
       ? codeData
@@ -250,7 +221,6 @@ function CodeBlock({ stepIndex, data, convId }: CodeBlockProps) {
     (typeof codeData === "object" && codeData !== null
       ? (codeData as CodeData).segments
       : undefined) || [];
->>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
   const stepExecs = data.stepExecutions?.[stepIndex] || [];
   const stepStatus = data.steps[stepIndex]?.status;
   const isRunning = stepStatus === "running";
@@ -325,16 +295,12 @@ function CodeBlock({ stepIndex, data, convId }: CodeBlockProps) {
     setRunning(true);
     setExecResult(null);
     try {
-<<<<<<< HEAD
-      const result = await executeCode({ code, language, conv_id: convId || undefined, step_index: stepIndex });
-=======
       const result = await executeCode({
         code,
         language,
         conv_id: convId || undefined,
         step_index: stepIndex,
       });
->>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
       setExecResult(result);
       if (convId) {
         const outputs = await listStepOutputs(convId, stepIndex).catch(() => ({
@@ -355,14 +321,10 @@ function CodeBlock({ stepIndex, data, convId }: CodeBlockProps) {
     setTimeout(() => setCopied(false), 2000);
   };
 
-<<<<<<< HEAD
-  const highlightedHtml = useMemo(() => highlightCodeSyntax(code, language), [code, language]);
-=======
   const highlightedHtml = useMemo(
     () => highlightCodeSyntax(code, language),
     [code, language],
   );
->>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
   const execFigures = (execResult?.figures as string[]) || [];
   const allFigures = [
     ...execFigures,
@@ -469,9 +431,6 @@ function CodeBlock({ stepIndex, data, convId }: CodeBlockProps) {
       )}
 
       {/* Execution results (fallback single-block) */}
-<<<<<<< HEAD
-      {!hasGroups && <CodeResultSection result={execResult} figures={allFigures} convId={convId} stepIndex={stepIndex} />}
-=======
       {!hasGroups && (
         <CodeResultSection
           result={execResult}
@@ -480,7 +439,6 @@ function CodeBlock({ stepIndex, data, convId }: CodeBlockProps) {
           stepIndex={stepIndex}
         />
       )}
->>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
     </div>
   );
 }

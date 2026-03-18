@@ -141,14 +141,10 @@ function graphReducer(state: GraphState, action: GraphAction): GraphState {
       if (!node || node.description === action.payload.description)
         return state;
       const nodes = new Map(state.nodes);
-<<<<<<< HEAD
-      nodes.set(action.payload.id, { ...node, description: action.payload.description });
-=======
       nodes.set(action.payload.id, {
         ...node,
         description: action.payload.description,
       });
->>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
       return { ...state, nodes };
     }
 
@@ -525,41 +521,6 @@ export function useGraphEngine() {
     dispatch({ type: "SET_STATE", payload: snapshot });
   }, [state]);
 
-<<<<<<< HEAD
-  return useMemo(() => ({
-    state,
-    addNode,
-    updateNode,
-    removeNode,
-    removeNodes,
-    setNodeStatus,
-    setNodeTool,
-    setNodeTitle,
-    setNodeDescription,
-    setPortValue,
-    addConnection,
-    removeConnection,
-    setViewport,
-    selectNode,
-    toggleSelectNode,
-    setSelectedNodes,
-    selectConnection,
-    relayoutVertical,
-    clear,
-    getSerializedState,
-    setState,
-    pushUndo,
-    undo,
-    redo,
-  }), [
-    state, addNode, updateNode, removeNode, removeNodes,
-    setNodeStatus, setNodeTool, setNodeTitle, setNodeDescription, setPortValue,
-    addConnection, removeConnection, setViewport, selectNode,
-    toggleSelectNode, setSelectedNodes, selectConnection,
-    relayoutVertical, clear, getSerializedState, setState,
-    pushUndo, undo, redo,
-  ]);
-=======
   return useMemo(
     () => ({
       state,
@@ -614,5 +575,4 @@ export function useGraphEngine() {
       redo,
     ],
   );
->>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
 }

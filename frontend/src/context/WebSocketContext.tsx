@@ -176,13 +176,9 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
                     | Record<string, unknown>
                     | undefined,
                   fixAttempts: (result.fix_attempts as number) || 0,
-<<<<<<< HEAD
-                  segments: Array.isArray(result.segments) ? result.segments as import('@/types').CodeSegment[] : undefined,
-=======
                   segments: Array.isArray(result.segments)
                     ? (result.segments as import("@/types").CodeSegment[])
                     : undefined,
->>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
                 },
               });
             }

@@ -1,15 +1,3 @@
-<<<<<<< HEAD
-import { useState, useEffect, useMemo } from 'react';
-import { useAppContext } from '@/context/AppContext';
-import { useChatContext } from '@/context/ChatContext';
-import { listStepOutputs, getStepOutputUrl } from '@/api/files';
-import { useTranslation } from '@/i18n';
-import { MarkdownContent } from '@/utils/MarkdownContent';
-import { highlightCodeSyntax } from '@/utils/codeHighlight';
-import { SpecialTokenBlock } from '@/components/chat/SpecialTokenBlock';
-import { recoverBrokenChars } from '@/utils/textClean';
-import type { PlanStepResult } from '@/types';
-=======
 import { useState, useEffect, useMemo } from "react";
 import { useAppContext } from "@/context/AppContext";
 import { useChatContext } from "@/context/ChatContext";
@@ -20,7 +8,6 @@ import { highlightCodeSyntax } from "@/utils/codeHighlight";
 import { SpecialTokenBlock } from "@/components/chat/SpecialTokenBlock";
 import { recoverBrokenChars } from "@/utils/textClean";
 import type { PlanStepResult } from "@/types";
->>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
 
 /** Strip special tokens from result text fields. */
 function stripSpecialTokens(s: string): string {
@@ -370,16 +357,7 @@ function ToolResultDetail({ result }: { result: unknown }) {
             />,
           );
           break;
-<<<<<<< HEAD
-        case 'planning':
-          parts.push(
-            <SpecialTokenBlock key={`seg-${i}`} label="Planning" content={seg.content} variant="think" isStreaming={false} />,
-          );
-          break;
-        case 'text':
-=======
         case "text":
->>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
           parts.push(
             <div key={`seg-${i}`} className="output-reasoning">
               <MarkdownContent text={seg.content} />
@@ -496,17 +474,12 @@ function ToolResultDetail({ result }: { result: unknown }) {
   }
 
   // Summary (Markdown rendered) — strip observation tags
-<<<<<<< HEAD
-  if (r.summary && typeof r.summary === 'string') {
-    parts.push(<div key="summary" className="output-summary"><MarkdownContent text={stripSpecialTokens(r.summary as string)} /></div>);
-=======
   if (r.summary && typeof r.summary === "string") {
     parts.push(
       <div key="summary" className="output-summary">
         <MarkdownContent text={stripSpecialTokens(r.summary as string)} />
       </div>,
     );
->>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
   }
 
   // Meta info (duration, tokens)

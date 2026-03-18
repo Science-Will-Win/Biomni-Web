@@ -106,11 +106,7 @@ export function GraphTab() {
       // But preserve manually-created graphs (via "Create Empty Graph" button)
       if (eng.state.nodes.size > 0 && !manualGraphRef.current) {
         eng.clear();
-<<<<<<< HEAD
-        lastPlanRef.current = '';
-=======
         lastPlanRef.current = "";
->>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
       }
       return;
     }
@@ -228,12 +224,6 @@ export function GraphTab() {
     });
 
     // Update analysis node status
-<<<<<<< HEAD
-    const allStepsDone = data.steps.length > 0 && data.steps.every(
-      s => s.status === 'completed' || s.status === 'error' || s.status === 'stopped',
-    );
-    const analysisNode = mergedNodes.find(n => n.id === 'analysis-node');
-=======
     const allStepsDone =
       data.steps.length > 0 &&
       data.steps.every(
@@ -243,7 +233,6 @@ export function GraphTab() {
           s.status === "stopped",
       );
     const analysisNode = mergedNodes.find((n) => n.id === "analysis-node");
->>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
     if (analysisNode) {
       if (
         data.analysis &&
@@ -495,15 +484,11 @@ export function GraphTab() {
       {isPopout ? (
         <>
           <GraphPopout onClose={() => setIsPopout(false)}>
-<<<<<<< HEAD
-            <GraphCanvas key="popout" engine={engine} skipInitialLayout={restoredRef.current} />
-=======
             <GraphCanvas
               key="popout"
               engine={engine}
               skipInitialLayout={restoredRef.current}
             />
->>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
           </GraphPopout>
           <div className="graph-popout-notice">
             <span>
@@ -515,16 +500,12 @@ export function GraphTab() {
           </div>
         </>
       ) : (
-<<<<<<< HEAD
-        <GraphCanvas key="inline" engine={engine} visible={state.activeDetailTab === 'graph'} skipInitialLayout={restoredRef.current} />
-=======
         <GraphCanvas
           key="inline"
           engine={engine}
           visible={state.activeDetailTab === "graph"}
           skipInitialLayout={restoredRef.current}
         />
->>>>>>> 064c1ba3e0e3069e5c3e5d438c7fb44144593902
       )}
     </div>
   );
