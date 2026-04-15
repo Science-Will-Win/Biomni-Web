@@ -29,6 +29,11 @@ opentelemetry-distro
 opentelemetry-exporter-otlp
 opentelemetry-instrumentation-fastapi
 
+neo4j==5.14.1
+ragas==0.1.4
+datasets==2.18.0
+opentelemetry-api
+
 # ─── Utilities ───
 pyyaml
 requests

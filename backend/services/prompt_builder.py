@@ -548,6 +548,10 @@ If no code is needed, respond with a clear text answer.
 - When using biomni functions, specify the full import path (e.g., from biomni.tool.literature import query_pubmed).
 """
 
+def _build_insight_section(insights: list = None) -> str:
+    if not insights: return ""
+    text = "\n".join(f"- {i}" for i in insights)
+    return f"\n💡 과거 경험(BEST PRACTICES):\n{text}\n이 지침을 반드시 적용하여 실수를 반복하지 마세요.\n"
 
 # ═══════════════════════════════════════════
 # Public API
@@ -578,6 +582,7 @@ def build_prompt(
     file_schemas: str = "",
     # Step execution — omit SECTION_PLAN to prevent model from creating a new plan
     is_step_execution: bool = False,
+    insights: list = None,
 ) -> str:
     """Build a system prompt for the given mode.
 
@@ -617,6 +622,7 @@ def build_prompt(
             parts.append(SECTION_SELF_CRITIC)
         parts.append(_build_custom_resources_section(custom_tools, custom_data, custom_software, know_how_docs))
         parts.append(_build_env_resources_section(tool_desc, data_lake_path, data_lake_content, library_content, is_retrieval))
+        parts.append(_build_insight_section(insights))
         return "\n".join(parts)
 
     elif mode == PromptMode.AGENT:

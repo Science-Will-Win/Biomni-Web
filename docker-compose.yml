@@ -1,6 +1,15 @@
 version: "3.8"
 
 services:
+  neo4j:
+    image: neo4j:5.12.0
+    container_name: biomni-neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/biomnipassword
+
   aigen-backend:
     build:
       context: ./backend
@@ -37,6 +46,7 @@ services:
       - "8003:8000"
     depends_on:
       - aigen-db
+      - neo4j
     restart: unless-stopped
 
   aigen-db:
