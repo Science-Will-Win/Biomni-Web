@@ -551,7 +551,8 @@ If no code is needed, respond with a clear text answer.
 def _build_insight_section(insights: list = None) -> str:
     if not insights: return ""
     text = "\n".join(f"- {i}" for i in insights)
-    return f"\n💡 과거 경험(BEST PRACTICES):\n{text}\n이 지침을 반드시 적용하여 실수를 반복하지 마세요.\n"
+    # 모델이 지침을 반드시 따르도록 강력한 영어 지시어(MUST) 사용
+    return f"\n💡 PAST EXPERIENCES (BEST PRACTICES):\n{text}\nYou MUST apply these guidelines to avoid repeating past mistakes.\n"
 
 # ═══════════════════════════════════════════
 # Public API

@@ -3,7 +3,8 @@ FROM jiyeonl/biomni-base:latest
 WORKDIR /app/backend_code
 
 # COPY 전에 패키지를 먼저 설치하면 빌드 속도(캐싱)에 유리합니다.
-RUN pip install --no-cache-dir asyncpg psycopg2-binary
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # 코드 복사 (.dockerignore에 의해 .env 파일은 자동으로 제외됨)
 COPY . /app/backend_code

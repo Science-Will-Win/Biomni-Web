@@ -40,7 +40,9 @@ services:
     entrypoint: ["bash", "-c"]
     command:
       - |
-        pip install asyncpg docker -q 2>/dev/null || true
+        echo "Installing missing dependencies..."
+        # requirements.txt에 있는 모든 것을 설치하도록 명령 추가
+        pip install -r /app/backend_code/requirements.txt -q
         ./entrypoint.sh
     ports:
       - "8003:8000"
@@ -61,23 +63,23 @@ services:
     volumes:
       - aigen-pgdata:/var/lib/postgresql/data
 
-  vllm-server:
-    image: vllm/vllm-openai:latest
-    container_name: vllm-server
-    runtime: nvidia
-    ports:
-      - "30000:8000"
-    volumes:
-      - ../models:/app/models
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-    command: >
-      --model /app/models/Ministral-3-3B-Reasoning-2512
-      --served-model-name ministral-reasoning
-      --port 8000
-      --host 0.0.0.0
-      --max-model-len 65536
-    restart: unless-stopped
+  # vllm-server:
+  #   image: vllm/vllm-openai:latest
+  #   container_name: vllm-server
+  #   runtime: nvidia
+  #   ports:
+  #     - "30000:8000"
+  #   volumes:
+  #     - ../models:/app/models
+  #   environment:
+  #     - NVIDIA_VISIBLE_DEVICES=all
+  #   command: >
+  #     --model /app/models/Ministral-3-3B-Reasoning-2512
+  #     --served-model-name ministral-reasoning
+  #     --port 8000
+  #     --host 0.0.0.0
+  #     --max-model-len 65536
+  #   restart: unless-stopped
 
 volumes:
   aigen-pgdata:

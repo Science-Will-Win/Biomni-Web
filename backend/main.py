@@ -9,6 +9,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
+from pydantic import BaseModel
+from biomni.memory.graph_memory import GraphMemory
 
 # A1이 사용할 수 있도록 환경변수 강제 로드
 load_dotenv(dotenv_path="../.env", override=True)
@@ -29,6 +31,12 @@ sys.modules["langchain.schema.document"] = langchain_core.documents
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("biomni_backend")
+
+class FeedbackRequest(BaseModel):
+    task_name: str
+    tool_name: str
+    is_correct: bool
+    answer: str
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -110,6 +118,21 @@ async def health_check():
         pass
 
     return {"status": "ok", "vllm": vllm_ok, "db": db_ok}
+
+@app.post("/api/feedback")
+def submit_feedback(req: FeedbackRequest):
+    try:
+        # 도커 내부이므로 GraphMemory 정상 호출됨
+        graph_db = GraphMemory()
+        graph_db.update_insight_feedback(
+            task_name=req.task_name,
+            tool_name=req.tool_name,
+            is_correct=req.is_correct,
+            response=req.answer
+        )
+        return {"status": "success", "message": "GraphDB feedback applied"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 uploads_dir = os.getenv("UPLOADS_DIR", "/app/uploads")
 if os.path.exists(uploads_dir):

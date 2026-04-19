@@ -22,6 +22,7 @@ from services.biomni_tools import BiomniToolLoader, scan_data_lake
 from biomni.agent.a1 import A1
 from services.llm_service import get_llm_service, _PROVIDER_TO_SOURCE
 from services.prompt_builder import PromptMode, build_prompt, _closing_tag
+from biomni.memory.graph_memory import GraphMemory
 
 logger = logging.getLogger("biomni_backend.chat_handler")
 
@@ -1136,6 +1137,17 @@ class ChatHandler:
                 else f"- {k.get('name', '')}"
                 for k in selected_know_how
             ] if selected_know_how else None
+
+            graph_db = GraphMemory()
+            current_tool = step.get("tool", "")
+            retrieved_insights = []
+            if current_tool:
+                try:
+                    insights_dicts = graph_db.fetch_global_insights(current_tool)
+                    retrieved_insights = [d["content"] for d in insights_dicts]
+                except Exception as e:
+                    logger.warning(f"인사이트 추출 실패: {e}")
+
             base_prompt = build_prompt(
                 PromptMode.FULL,
                 token_format=behavior,
@@ -1146,6 +1158,7 @@ class ChatHandler:
                 is_retrieval=bool(tool_desc),
                 is_step_execution=True,
                 self_critic=True,
+                insights=retrieved_insights
             )
             if available_tools_text:
                 base_prompt += "\n\n" + available_tools_text
@@ -1994,6 +2007,25 @@ class ChatHandler:
             # 5. 최종 응답 DB 저장
             if full_response.strip():
                 await conv_svc.add_message(UUID(conv_id), "assistant", full_response.strip())
+
+            # [수정] Ragas 평가 백그라운드 태스크 실행 (Plan 모드가 아니거나 스텝 완료 후)
+            try:
+                plan_state = self._plan_states.get(conv_id, {})
+                used_insights = plan_state.get("_retrieved_insights", []) # (미리 plan_state에 저장해두었다고 가정)
+                
+                if full_response.strip() and used_insights:
+                    # ragas_evaluator.py 의 evaluate_and_log 함수를 비동기로 호출 (생성 필요)
+                    from services.ragas_evaluator import evaluate_and_log 
+                    asyncio.create_task(
+                        evaluate_and_log(
+                            question=request.message,
+                            answer=full_response.strip(),
+                            contexts=used_insights,
+                            conv_id=conv_id
+                        )
+                    )
+            except Exception as eval_e:
+                logger.warning(f"Ragas 평가 태스크 등록 실패: {eval_e}")
 
             yield _ev("done", {"done": True})
 
